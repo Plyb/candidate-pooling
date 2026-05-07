@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "candidate_pooling"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "braided",
+    "mirror_pipeline @ file:///home/kobyjl/MIRROR-Pipeline",
+    "torch",
+    "scikit-learn",
+    "numpy",
+    "byutils @ git+https://github.com/Plyb/byutils.git",
+]
+
+[project.optional-dependencies]
+dev = ["pyright"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

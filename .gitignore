@@ -1,0 +1,22 @@
+# Environment
+.env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Scratch / cache
+nobackup/
+*.out
+slurm-*.out
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Tools
+.pyright/
+.ruff_cache/
+
+# Heavy context
+Candidate_Pooling_Explained.pdf
