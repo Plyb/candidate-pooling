@@ -19,7 +19,7 @@ def make_cluster_strand(n_clusters: int = N_CLUSTERS) -> ManyToMany[ClusteredCan
         F = np.stack(
             [
                 np.concatenate(
-                    [c["loss_deltas"].numpy(), c["entropy_deltas"].numpy()]
+                    [np.asarray(c["loss_deltas"]), np.asarray(c["entropy_deltas"])]
                 )
                 for c in candidates
             ]

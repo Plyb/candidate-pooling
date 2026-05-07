@@ -19,13 +19,13 @@ def select_basis() -> ManyToMany[BasisDirection]:
             by_cluster[c["cluster_id"]].append(c)
 
         for cluster_id, members in by_cluster.items():
-            loss_fps = np.stack([m["loss_deltas"].numpy() for m in members])
+            loss_fps = np.stack([np.asarray(m["loss_deltas"]) for m in members])
             centroid = loss_fps.mean(0)
             centroid_norm = centroid / (np.linalg.norm(centroid) + 1e-8)
 
             scores = [
                 float(
-                    np.abs(fp).mean()
+                    np.linalg.norm(fp)
                     * (fp / (np.linalg.norm(fp) + 1e-8)) @ centroid_norm
                 )
                 for fp in loss_fps

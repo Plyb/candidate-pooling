@@ -74,7 +74,7 @@ def make_fingerprint_strand(
         baselines: Sequence[BaselineResult],
     ) -> Iterator[FingerprintedCandidate]:
         for candidate in candidates:
-            v: Float[Tensor, "d_model"] = candidate["vector"].cuda()
+            v: Float[Tensor, "d_model"] = torch.as_tensor(candidate["vector"]).cuda()  # type: ignore[attr-defined]
             deltas = [
                 _compute_delta(model, probe, baseline, layer, v, alpha)
                 for probe, baseline in zip(probe_examples, baselines)
