@@ -13,6 +13,10 @@ dependencies = [
     "scikit-learn",
     "numpy",
     "byutils @ git+https://github.com/Plyb/byutils.git",
+    "nnsight",
+    "jaxtyping",
+    "matplotlib",
+    "umap-learn",
 ]
 
 [project.optional-dependencies]
