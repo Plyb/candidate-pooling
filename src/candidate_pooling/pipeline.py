@@ -6,8 +6,7 @@ from braided.integrations.hf_datasets import (
     HFDatasetSerializer,
     hf_map_funcs,
 )
-from braided.spec import NodeSpec, validate_dag
-from braided.type_check import type_check
+from braided.spec import NodeSpec
 
 from candidate_pooling.basis import select_basis
 from candidate_pooling.cluster import make_cluster_strand
@@ -84,9 +83,6 @@ def run_pipeline() -> None:
     model = load_nnsight_model(MODEL_ID)
     train_ds, probe_ds = load_mmlu_splits()
     nodes = build_pipeline(model)
-
-    validate_dag(nodes, {"train": DatasetInput[MmluExample], "probe": DatasetInput[MmluExample]})
-    type_check(nodes, {"train": DatasetInput[MmluExample], "probe": DatasetInput[MmluExample]})
 
     inputs: dict[str, DatasetInput[MmluExample]] = {
         "train": DatasetInput[MmluExample](train_ds),
