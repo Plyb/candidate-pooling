@@ -78,7 +78,7 @@ def build_pipeline(
 
 def run_pipeline() -> None:
     from candidate_pooling.data import load_mmlu_splits
-    from candidate_pooling.evaluate import evaluate, visualize_clusters  # type: ignore[import-untyped]
+    from candidate_pooling.evaluate import evaluate, visualize_clusters
 
     model = load_nnsight_model(MODEL_ID)
     train_ds, probe_ds = load_mmlu_splits()
