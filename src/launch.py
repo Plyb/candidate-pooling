@@ -30,6 +30,8 @@ def main() -> None:
         gpus_per_node="a100:1",
         mem_per_cpu="32G",
         qos="dw87",
+        nodes=1,
+        ntasks_per_node=1,
     )
     submit_slurm_job(slurm, sys.argv[1:])
     _run()  # only reached on compute node (login node exits via sys.exit)

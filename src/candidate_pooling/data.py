@@ -13,10 +13,10 @@ def load_mmlu_splits(
     shuffled = split.shuffle(seed=seed)
 
     train_ds = shuffled.select(range(n_train)).map(
-        lambda _, idx: {"example_id": idx}, with_indices=True
+        lambda item, idx: {**item['train'], "example_id": idx}, with_indices=True
     )
     probe_ds = shuffled.select(range(n_train, n_train + n_probe)).map(
-        lambda _, idx: {"example_id": n_train + idx}, with_indices=True
+        lambda item, idx: {**item['train'], "example_id": n_train + idx}, with_indices=True
     )
 
     return train_ds, probe_ds

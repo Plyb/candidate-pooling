@@ -1,12 +1,10 @@
+from collections.abc import Callable
 from typing import Iterator
 
-import torch
-from braided import strand
-from braided.strand import OneToOne
 from byutils import load_model
 from byutils import load_tokenizer
 from nnsight import LanguageModel
-from transformers import PreTrainedTokenizerBase
+from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from candidate_pooling.types import MmluExample, TokenizedExample
 
@@ -14,18 +12,17 @@ _ANSWER_LETTERS = ["A", "B", "C", "D"]
 _CHOICE_PREFIXES = ["A) ", "B) ", "C) ", "D) "]
 
 
-def load_nnsight_model(model_id: str) -> LanguageModel:
-    hf_model = load_model(model_id).cuda()
+def load_nnsight_model(model_id: str, model_cls: type[PreTrainedModel]) -> LanguageModel:
+    hf_model = load_model(model_id, model_class=model_cls).cuda()
     tokenizer: PreTrainedTokenizerBase = load_tokenizer(model_id)  # type: ignore[assignment]
     tokenizer.pad_token = tokenizer.eos_token
     return LanguageModel(hf_model, tokenizer=tokenizer)  # type: ignore[arg-type]
 
 
-def make_tokenize_strand(model: LanguageModel) -> OneToOne[TokenizedExample]:
+def make_tokenize_strand(model: LanguageModel) -> Callable[[MmluExample], TokenizedExample]:
     tokenizer: PreTrainedTokenizerBase = model.tokenizer  # type: ignore[assignment]
     answer_ids: list[int] = tokenizer.convert_tokens_to_ids(_ANSWER_LETTERS)  # type: ignore[assignment]
 
-    @strand
     def tokenize(example: MmluExample) -> TokenizedExample:
         choices_str = "\n".join(
             f"{prefix}{choice}"

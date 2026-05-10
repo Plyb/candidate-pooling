@@ -1,8 +1,7 @@
+from collections.abc import Callable
 from typing import Iterator, Sequence
 
 import torch
-from braided import strand
-from braided.strand import ManyToMany, OneToOne
 from jaxtyping import Float
 from nnsight import LanguageModel
 from torch import Tensor
@@ -13,6 +12,7 @@ from candidate_pooling.types import (
     Candidate,
     FingerprintedCandidate,
     TokenizedExample,
+    to_transformer_input,
 )
 
 _ALPHA_DEFAULT = 10.0
@@ -26,11 +26,11 @@ def _compute_delta(
     v: Float[Tensor, "d_model"],
     alpha: float,
 ) -> tuple[float, float]:
-    with torch.no_grad(), model.trace(probe):
-        model.model.layers[layer].output[0][:] += alpha * v  # type: ignore[attr-defined]
+    with torch.no_grad(), model.trace(to_transformer_input(probe)):
+        model.model.layers[layer].output[0, -1] += alpha * v  # type: ignore[attr-defined]
         logits = model.output.logits.save()  # type: ignore[attr-defined]
     steered_loss, steered_entropy = _logits_to_loss_entropy(
-        logits.value[0, -1], probe["label_id"]
+        logits[0, -1], probe["label_id"]
     )
     return steered_loss - baseline["loss"], steered_entropy - baseline["entropy"]
 
@@ -45,14 +45,13 @@ def _logits_to_loss_entropy(
     return loss, entropy
 
 
-def make_baseline_strand(model: LanguageModel) -> OneToOne[BaselineResult]:
+def make_baseline_strand(model: LanguageModel) -> Callable[[TokenizedExample], BaselineResult]:
 
-    @strand
     def compute_baseline(example: TokenizedExample) -> BaselineResult:
-        with torch.no_grad(), model.trace(example):
+        with torch.no_grad(), model.trace(to_transformer_input(example)):
             logits = model.output.logits.save()  # type: ignore[attr-defined]
         loss, entropy = _logits_to_loss_entropy(
-            logits.value[0, -1], example["label_id"]
+            logits[0, -1], example["label_id"]
         )
         return BaselineResult(
             loss=loss, entropy=entropy, example_id=example["example_id"]
@@ -65,9 +64,8 @@ def make_fingerprint_strand(
     model: LanguageModel,
     layer: int = LAYER,
     alpha: float = _ALPHA_DEFAULT,
-) -> ManyToMany[FingerprintedCandidate]:
+) -> Callable[[Sequence[Candidate], Sequence[TokenizedExample], Sequence[BaselineResult]], Iterator[FingerprintedCandidate]]:
 
-    @strand.many_to_many
     def fingerprint(
         candidates: Sequence[Candidate],
         probe_examples: Sequence[TokenizedExample],
