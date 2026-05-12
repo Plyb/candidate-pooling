@@ -1,5 +1,6 @@
 from collections import defaultdict
-from typing import Iterator, Sequence
+from collections.abc import Iterable
+from typing import Iterator
 
 import numpy as np
 
@@ -7,7 +8,7 @@ from candidate_pooling.types import BasisDirection, ClusteredCandidate
 
 
 def basis(
-    candidates: Sequence[ClusteredCandidate],
+    candidates: Iterable[ClusteredCandidate],
 ) -> Iterator[BasisDirection]:
     by_cluster: dict[int, list[ClusteredCandidate]] = defaultdict(list)
     for c in candidates:

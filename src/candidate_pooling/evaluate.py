@@ -1,3 +1,5 @@
+from typing import Collection
+
 import matplotlib.pyplot as plt
 import numpy as np
 import umap
@@ -6,7 +8,7 @@ from matplotlib.figure import Figure
 from candidate_pooling.types import BasisDirection, ClusteredCandidate
 
 
-def evaluate(basis_directions: list[BasisDirection]) -> Figure:
+def evaluate(basis_directions: Collection[BasisDirection]) -> Figure:
     vectors = np.stack([np.asarray(b["vector"]) for b in basis_directions])
     fps = np.stack([np.asarray(b["loss_fingerprint"]) for b in basis_directions])
     vectors /= np.linalg.norm(vectors, axis=1, keepdims=True) + 1e-8
@@ -26,7 +28,7 @@ def evaluate(basis_directions: list[BasisDirection]) -> Figure:
     return fig
 
 
-def visualize_clusters(clustered_candidates: list[ClusteredCandidate]) -> Figure:
+def visualize_clusters(clustered_candidates: Collection[ClusteredCandidate]) -> Figure:
     all_vectors = np.stack([np.asarray(c["vector"]) for c in clustered_candidates])
     cluster_ids = np.array([c["cluster_id"] for c in clustered_candidates])
 

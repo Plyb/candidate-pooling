@@ -1,4 +1,4 @@
-from typing import Iterator, Sequence
+from typing import Iterable, Iterator
 
 import numpy as np
 from sklearn.cluster import KMeans
@@ -9,7 +9,7 @@ N_CLUSTERS = 5
 
 
 def cluster(
-    candidates: Sequence[FingerprintedCandidate],
+    candidates: Iterable[FingerprintedCandidate],
     n_clusters: int = N_CLUSTERS
 ) -> Iterator[ClusteredCandidate]:
     F = np.stack(

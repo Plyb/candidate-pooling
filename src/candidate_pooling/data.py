@@ -1,12 +1,15 @@
 from datasets import Dataset
 from byutils import load_dataset
 
+from candidate_pooling.lib.typed_dataset import TypedDataset
+from candidate_pooling.types import MmluExample
+
 
 def load_mmlu_splits(
     n_train: int = 1000,
     n_probe: int = 200,
     seed: int = 42,
-) -> tuple[Dataset, Dataset]:
+) -> tuple[TypedDataset[MmluExample], TypedDataset[MmluExample]]:
     ds_dict = load_dataset("cais/mmlu", "auxiliary_train")
     split: Dataset = ds_dict["train"]  # type: ignore[assignment]
 
@@ -19,4 +22,4 @@ def load_mmlu_splits(
         lambda item, idx: {**item['train'], "example_id": n_train + idx}, with_indices=True
     )
 
-    return train_ds, probe_ds
+    return TypedDataset[MmluExample](train_ds), TypedDataset[MmluExample](probe_ds)

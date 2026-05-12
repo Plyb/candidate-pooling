@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from typing import Iterator, Sequence
+from typing import Iterable, Iterator
 
 import torch
 from jaxtyping import Float
@@ -64,12 +64,12 @@ def make_fingerprint_strand(
     model: LanguageModel,
     layer: int = LAYER,
     alpha: float = _ALPHA_DEFAULT,
-) -> Callable[[Sequence[Candidate], Sequence[TokenizedExample], Sequence[BaselineResult]], Iterator[FingerprintedCandidate]]:
+) -> Callable[[Iterable[Candidate], Iterable[TokenizedExample], Iterable[BaselineResult]], Iterator[FingerprintedCandidate]]:
 
     def fingerprint(
-        candidates: Sequence[Candidate],
-        probe_examples: Sequence[TokenizedExample],
-        baselines: Sequence[BaselineResult],
+        candidates: Iterable[Candidate],
+        probe_examples: Iterable[TokenizedExample],
+        baselines: Iterable[BaselineResult],
     ) -> Iterator[FingerprintedCandidate]:
         for candidate in candidates:
             v: Float[Tensor, "d_model"] = torch.as_tensor(candidate["vector"]).cuda()  # type: ignore[attr-defined]
