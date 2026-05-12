@@ -15,7 +15,10 @@ def cluster(
     F = np.stack(
         [
             np.concatenate(
-                [np.asarray(c["loss_deltas"]), np.asarray(c["entropy_deltas"])]
+                [
+                    c["loss_deltas"].detach().cpu().numpy(),
+                    c["entropy_deltas"].detach().cpu().numpy()
+                ]
             )
             for c in candidates
         ]
