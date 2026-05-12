@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from typing import Iterable, Iterator
+from typing import Iterable
 
 import torch
 from jaxtyping import Float
@@ -10,7 +10,7 @@ from candidate_pooling.mining import LAYER
 from candidate_pooling.types import (
     BaselineResult,
     Candidate,
-    FingerprintedCandidate,
+    FingerprintedCandidates,
     TokenizedExample,
     to_transformer_input,
 )
@@ -45,7 +45,7 @@ def _logits_to_loss_entropy(
     return loss, entropy
 
 
-def make_baseline_strand(model: LanguageModel) -> Callable[[TokenizedExample], BaselineResult]:
+def make_baseline_fn(model: LanguageModel) -> Callable[[TokenizedExample], BaselineResult]:
 
     def compute_baseline(example: TokenizedExample) -> BaselineResult:
         with torch.no_grad(), model.trace(to_transformer_input(example)):
@@ -60,28 +60,45 @@ def make_baseline_strand(model: LanguageModel) -> Callable[[TokenizedExample], B
     return compute_baseline
 
 
-def make_fingerprint_strand(
+def make_fingerprint_fn(
     model: LanguageModel,
     layer: int = LAYER,
     alpha: float = _ALPHA_DEFAULT,
-) -> Callable[[Iterable[Candidate], Iterable[TokenizedExample], Iterable[BaselineResult]], Iterator[FingerprintedCandidate]]:
+) -> Callable[[Iterable[Candidate], Iterable[TokenizedExample], Iterable[BaselineResult]], FingerprintedCandidates]:
 
     def fingerprint(
         candidates: Iterable[Candidate],
         probe_examples: Iterable[TokenizedExample],
         baselines: Iterable[BaselineResult],
-    ) -> Iterator[FingerprintedCandidate]:
+    ) -> FingerprintedCandidates:
+        vectors: list[Float[Tensor, "d_model"]] = []
+        layers: list[int] = []
+        example_ids: list[int] = []
+        token_positions: list[int] = []
+        all_loss_deltas: list[Float[Tensor, "n_probe"]] = []
+        all_entropy_deltas: list[Float[Tensor, "n_probe"]] = []
+
         for candidate in candidates:
-            v: Float[Tensor, "d_model"] = torch.as_tensor(candidate["vector"]).cuda()  # type: ignore[attr-defined]
+            v: Float[Tensor, "d_model"] = torch.as_tensor(candidate["vector"]).cuda()
             deltas = [
                 _compute_delta(model, probe, baseline, layer, v, alpha)
                 for probe, baseline in zip(probe_examples, baselines)
             ]
-            loss_deltas, entropy_deltas = zip(*deltas)
-            yield FingerprintedCandidate(
-                **candidate,
-                loss_deltas=torch.as_tensor(list(loss_deltas)),  # type: ignore[attr-defined]
-                entropy_deltas=torch.as_tensor(list(entropy_deltas)),  # type: ignore[attr-defined]
-            )
+            loss_d, entropy_d = zip(*deltas)
+            vectors.append(candidate["vector"])
+            layers.append(candidate["layer"])
+            example_ids.append(candidate["example_id"])
+            token_positions.append(candidate["token_pos"])
+            all_loss_deltas.append(torch.as_tensor(list(loss_d)))
+            all_entropy_deltas.append(torch.as_tensor(list(entropy_d)))
+        
+        return FingerprintedCandidates(
+            vector=torch.stack(vectors),
+            layer=layers,
+            example_id=example_ids,
+            token_pos=token_positions,
+            loss_deltas=torch.stack(all_loss_deltas),
+            entropy_deltas=torch.stack(all_entropy_deltas),
+        )
 
     return fingerprint

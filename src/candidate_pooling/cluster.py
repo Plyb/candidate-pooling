@@ -1,27 +1,21 @@
-from typing import Iterable, Iterator
-
 import numpy as np
 from sklearn.cluster import KMeans
 
-from candidate_pooling.types import ClusteredCandidate, FingerprintedCandidate
+from candidate_pooling.types import ClusteredCandidates, FingerprintedCandidates
 
 N_CLUSTERS = 5
 
 
 def cluster(
-    candidates: Iterable[FingerprintedCandidate],
-    n_clusters: int = N_CLUSTERS
-) -> Iterator[ClusteredCandidate]:
-    F = np.stack(
+    candidates: FingerprintedCandidates,
+    n_clusters: int = N_CLUSTERS,
+) -> ClusteredCandidates:
+    F = np.concatenate(
         [
-            np.concatenate(
-                [
-                    c["loss_deltas"].detach().cpu().numpy(),
-                    c["entropy_deltas"].detach().cpu().numpy()
-                ]
-            )
-            for c in candidates
-        ]
+            candidates["loss_deltas"].detach().cpu().numpy(),
+            candidates["entropy_deltas"].detach().cpu().numpy(),
+        ],
+        axis=1,
     )  # [N, 2*n_probe]
 
     F = (F - F.mean(0)) / (F.std(0) + 1e-8)  # column-standardize
@@ -31,5 +25,4 @@ def cluster(
         n_clusters=n_clusters, random_state=42, n_init="auto"
     ).fit_predict(F)
 
-    for cand, label in zip(candidates, labels):
-        yield ClusteredCandidate(**cand, cluster_id=int(label))
+    return ClusteredCandidates(**candidates, cluster_id=labels.tolist())

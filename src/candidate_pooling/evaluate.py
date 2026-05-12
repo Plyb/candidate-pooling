@@ -5,7 +5,7 @@ import numpy as np
 import umap
 from matplotlib.figure import Figure
 
-from candidate_pooling.types import BasisDirection, ClusteredCandidate
+from candidate_pooling.types import BasisDirection, ClusteredCandidates
 
 
 def evaluate(basis_directions: Collection[BasisDirection]) -> Figure:
@@ -28,14 +28,14 @@ def evaluate(basis_directions: Collection[BasisDirection]) -> Figure:
     return fig
 
 
-def visualize_clusters(clustered_candidates: Collection[ClusteredCandidate]) -> Figure:
-    all_vectors = np.stack([np.asarray(c["vector"]) for c in clustered_candidates])
-    cluster_ids = np.array([c["cluster_id"] for c in clustered_candidates])
+def visualize_clusters(clustered_candidates: ClusteredCandidates) -> Figure:
+    all_vectors = clustered_candidates["vector"].detach().cpu().numpy()
+    cluster_ids = np.array(clustered_candidates["cluster_id"])
 
     embedding: np.ndarray = umap.UMAP(n_components=2, random_state=42).fit_transform(all_vectors)  # type: ignore[attr-defined]
 
     fig, ax = plt.subplots()
     sc = ax.scatter(embedding[:, 0], embedding[:, 1], c=cluster_ids, cmap="tab10", alpha=0.4, s=5)
     plt.colorbar(sc, ax=ax, label="cluster_id")
-    ax.set_title(f"UMAP of {len(clustered_candidates)} candidates")
+    ax.set_title(f"UMAP of {len(clustered_candidates['cluster_id'])} candidates")
     return fig

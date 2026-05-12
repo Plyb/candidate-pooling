@@ -1,35 +1,28 @@
-from collections import defaultdict
-from collections.abc import Iterable
 from typing import Iterator
 
 import numpy as np
 
-from candidate_pooling.types import BasisDirection, ClusteredCandidate
+from candidate_pooling.types import BasisDirection, ClusteredCandidates
 
 
 def basis(
-    candidates: Iterable[ClusteredCandidate],
+    candidates: ClusteredCandidates,
 ) -> Iterator[BasisDirection]:
-    by_cluster: dict[int, list[ClusteredCandidate]] = defaultdict(list)
-    for c in candidates:
-        by_cluster[c["cluster_id"]].append(c)
-
-    for cluster_id, members in by_cluster.items():
-        loss_fps = np.stack([np.asarray(m["loss_deltas"]) for m in members])
+    cluster_ids = candidates["cluster_id"]
+    for cluster_id in sorted(set(cluster_ids)):
+        indices = [i for i, c in enumerate(cluster_ids) if c == cluster_id]
+        loss_fps = candidates["loss_deltas"][indices].detach().cpu().numpy()
         centroid = loss_fps.mean(0)
         centroid_norm = centroid / (np.linalg.norm(centroid) + 1e-8)
 
         scores = [
-            float(
-                np.linalg.norm(fp)
-                * (fp / (np.linalg.norm(fp) + 1e-8)) @ centroid_norm
-            )
+            float(np.linalg.norm(fp) * (fp / (np.linalg.norm(fp) + 1e-8)) @ centroid_norm)
             for fp in loss_fps
         ]
-        best = members[int(np.argmax(scores))]
+        best = indices[int(np.argmax(scores))]
         yield BasisDirection(
-            vector=best["vector"],
+            vector=candidates["vector"][best],
             cluster_id=cluster_id,
-            loss_fingerprint=best["loss_deltas"],
-            entropy_fingerprint=best["entropy_deltas"],
+            loss_fingerprint=candidates["loss_deltas"][best],
+            entropy_fingerprint=candidates["entropy_deltas"][best],
         )

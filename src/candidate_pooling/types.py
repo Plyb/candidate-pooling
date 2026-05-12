@@ -38,13 +38,17 @@ class BaselineResult(TypedDict):
     example_id: int
 
 
-class FingerprintedCandidate(Candidate):
-    loss_deltas: Float[Tensor, "n_probe"]
-    entropy_deltas: Float[Tensor, "n_probe"]
+class FingerprintedCandidates(TypedDict):
+    vector: Float[Tensor, "n_candidates d_model"]
+    layer: list[int]
+    example_id: list[int]
+    token_pos: list[int]
+    loss_deltas: Float[Tensor, "n_candidates n_probe"]
+    entropy_deltas: Float[Tensor, "n_candidates n_probe"]
 
 
-class ClusteredCandidate(FingerprintedCandidate):
-    cluster_id: int
+class ClusteredCandidates(FingerprintedCandidates):
+    cluster_id: list[int]
 
 
 class BasisDirection(TypedDict):

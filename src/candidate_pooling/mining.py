@@ -13,7 +13,7 @@ LAYER = 12
 TOP_K = 5
 
 
-def make_mining_strand(
+def make_mining_fn(
     model: LanguageModel,
     layer: int = LAYER,
     top_k: int = TOP_K,
