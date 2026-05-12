@@ -3,5 +3,6 @@
   "venv": ".env",
   "include": ["src"],
   "extraPaths": ["src"],
-  "typeCheckingMode": "standard"
+  "typeCheckingMode": "standard",
+  "reportPrivateImportUsage": "none"
 }
