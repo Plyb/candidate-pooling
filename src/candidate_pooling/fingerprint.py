@@ -25,23 +25,24 @@ def _compute_delta(
     layer: int,
     v: Float[Tensor, "d_model"],
     alpha: float,
-) -> tuple[float, float]:
+) -> tuple[Float[Tensor, "seq"], Float[Tensor, "seq"]]:
     with torch.no_grad(), model.trace(to_transformer_input(probe)):
         model.model.layers[layer].output[0, -1] += alpha * v  # type: ignore[attr-defined]
         logits = model.output.logits.save()  # type: ignore[attr-defined]
-    steered_loss, steered_entropy = _logits_to_loss_entropy(
-        logits[0, -1], probe["label_id"]
+    steered_loss, steered_entropy = _logits_to_loss_entropy(logits[0], probe["label_id"])
+    return (
+        steered_loss - torch.as_tensor(baseline["loss"]),
+        steered_entropy - torch.as_tensor(baseline["entropy"]),
     )
-    return steered_loss - baseline["loss"], steered_entropy - baseline["entropy"]
 
 
 def _logits_to_loss_entropy(
-    logits: Float[Tensor, "vocab"],
+    logits: Float[Tensor, "seq vocab"],
     label_id: int,
-) -> tuple[float, float]:
+) -> tuple[Float[Tensor, "seq"], Float[Tensor, "seq"]]:
     probs = logits.softmax(dim=-1)
-    loss = -probs[label_id].log().item()
-    entropy = -(probs * probs.clamp_min(1e-9).log()).sum().item()
+    loss = -probs[:, label_id].log()
+    entropy = -(probs * probs.clamp_min(1e-9).log()).sum(dim=-1)
     return loss, entropy
 
 
@@ -50,9 +51,7 @@ def make_baseline_fn(model: LanguageModel) -> Callable[[TokenizedExample], Basel
     def compute_baseline(example: TokenizedExample) -> BaselineResult:
         with torch.no_grad(), model.trace(to_transformer_input(example)):
             logits = model.output.logits.save()  # type: ignore[attr-defined]
-        loss, entropy = _logits_to_loss_entropy(
-            logits[0, -1], example["label_id"]
-        )
+        loss, entropy = _logits_to_loss_entropy(logits[0], example["label_id"])
         return BaselineResult(
             loss=loss, entropy=entropy, example_id=example["example_id"]
         )
@@ -75,8 +74,8 @@ def make_fingerprint_fn(
         layers: list[int] = []
         example_ids: list[int] = []
         token_positions: list[int] = []
-        all_loss_deltas: list[Float[Tensor, "n_probe"]] = []
-        all_entropy_deltas: list[Float[Tensor, "n_probe"]] = []
+        all_loss_deltas: list[Float[Tensor, "n_tokens_in_probe"]] = []
+        all_entropy_deltas: list[Float[Tensor, "n_tokens_in_probe"]] = []
 
         for candidate in candidates:
             v: Float[Tensor, "d_model"] = torch.as_tensor(candidate["vector"]).cuda()
@@ -89,8 +88,8 @@ def make_fingerprint_fn(
             layers.append(candidate["layer"])
             example_ids.append(candidate["example_id"])
             token_positions.append(candidate["token_pos"])
-            all_loss_deltas.append(torch.as_tensor(list(loss_d)))
-            all_entropy_deltas.append(torch.as_tensor(list(entropy_d)))
+            all_loss_deltas.append(torch.cat(list(loss_d)))
+            all_entropy_deltas.append(torch.cat(list(entropy_d)))
         
         return FingerprintedCandidates(
             vector=torch.stack(vectors),

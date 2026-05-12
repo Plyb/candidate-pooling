@@ -33,8 +33,8 @@ class Candidate(TypedDict):
 
 
 class BaselineResult(TypedDict):
-    loss: float
-    entropy: float
+    loss: Float[Tensor, "seq"]
+    entropy: Float[Tensor, "seq"]
     example_id: int
 
 
@@ -43,8 +43,8 @@ class FingerprintedCandidates(TypedDict):
     layer: list[int]
     example_id: list[int]
     token_pos: list[int]
-    loss_deltas: Float[Tensor, "n_candidates n_probe"]
-    entropy_deltas: Float[Tensor, "n_candidates n_probe"]
+    loss_deltas: Float[Tensor, "n_candidates n_tokens_in_probe"]
+    entropy_deltas: Float[Tensor, "n_candidates n_tokens_in_probe"]
 
 
 class ClusteredCandidates(FingerprintedCandidates):
@@ -54,5 +54,5 @@ class ClusteredCandidates(FingerprintedCandidates):
 class BasisDirection(TypedDict):
     vector: Float[Tensor, "d_model"]
     cluster_id: int
-    loss_fingerprint: Float[Tensor, "n_probe"]
-    entropy_fingerprint: Float[Tensor, "n_probe"]
+    loss_fingerprint: Float[Tensor, "n_tokens_in_probe"]
+    entropy_fingerprint: Float[Tensor, "n_tokens_in_probe"]
