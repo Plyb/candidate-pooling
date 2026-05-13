@@ -4,12 +4,13 @@ from jaxtyping import Float, Int
 from torch import Tensor
 
 
-class MmluExample(TypedDict):
+class McqaExample(TypedDict):
     question: str
-    choices: list[str]  # always length 4
-    answer: int  # 0-3
+    choices: list[str]
+    answer: int # [0,n) where n is len(choices)
+
+class MmluExample(McqaExample): # always 4 choices
     subject: str
-    example_id: int
 
 class TransformerInput(TypedDict):
     input_ids: Int[Tensor, 'batch seq']

@@ -27,7 +27,7 @@ def _to_dataset[T : Mapping[str, Any]](records: Iterable[T]) -> TypedDataset[T]:
 
 
 def run_pipeline(n_train: int = 10, n_probe: int = 5) -> None:
-    from candidate_pooling.data import load_mmlu_splits
+    from candidate_pooling.data import load_mmlu, tokenize_dataset
     from candidate_pooling.evaluate import evaluate, visualize_clusters
 
     model = load_nnsight_model(MODEL_ID, LlamaForCausalLM)
@@ -37,22 +37,22 @@ def run_pipeline(n_train: int = 10, n_probe: int = 5) -> None:
     fp_fn = make_fingerprint_fn(model, LAYER)
 
     train_ds, probe_ds = None, None
-    def get_tok_train_and_probe() -> tuple[TypedDataset[TokenizedExample], TypedDataset[TokenizedExample]]:
+    def get_tok_splits() -> tuple[TypedDataset[TokenizedExample], TypedDataset[TokenizedExample]]:
         nonlocal train_ds, probe_ds
         if train_ds is None or probe_ds is None:
-            train_ds, probe_ds = load_mmlu_splits(model, n_train=n_train, n_probe=n_probe)
+            train_ds, probe_ds = tokenize_dataset(model, load_mmlu(), n_train, n_probe)
         return train_ds, probe_ds
 
     def get_tok_train() -> TypedDataset[TokenizedExample]:
         return load_or_compute(
             CACHE_DIR / "tok_train",
-            lambda: get_tok_train_and_probe()[0],
+            lambda: get_tok_splits()[0],
         )
 
     def get_tok_probe() -> TypedDataset[TokenizedExample]:
         return load_or_compute(
             CACHE_DIR / "tok_probe",
-            lambda: get_tok_train_and_probe()[1],
+            lambda: get_tok_splits()[1],
         )
 
     def get_mined() -> TypedDataset[Candidate]:
