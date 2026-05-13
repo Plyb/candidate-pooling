@@ -39,6 +39,9 @@ class TypedDataset[RowT: Mapping[str, Any]]:
     def filter(self, fn: Callable[[RowT], bool], **kwargs: Any) -> TypedDataset[RowT]:
         return TypedDataset[RowT](self._dataset.filter(fn, **kwargs))
 
+    def shuffle(self, seed: int | None = None) -> TypedDataset[RowT]:
+        return TypedDataset[RowT](self._dataset.shuffle(seed=seed))
+
     def to_iterable_dataset(self, num_shards: int | None = 1) -> TypedIterableDataset[RowT]:
         return TypedIterableDataset[RowT](self._dataset.to_iterable_dataset(num_shards=num_shards))
 
@@ -75,3 +78,6 @@ class TypedIterableDataset[RowT: Mapping[str, Any]]:
 
     def filter(self, fn: Callable[[RowT], bool], **kwargs: Any) -> TypedIterableDataset[RowT]:
         return TypedIterableDataset[RowT](self._dataset.filter(fn, **kwargs))
+
+    def shuffle(self, seed: int | None = None, buffer_size: int = 1000) -> TypedIterableDataset[RowT]:
+        return TypedIterableDataset[RowT](self._dataset.shuffle(seed=seed, buffer_size=buffer_size))

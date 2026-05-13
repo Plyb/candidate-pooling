@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def load_mmlu(seed: int = 42) -> TypedIterableDataset[MmluExample]:
     ds_dict = load_dataset("cais/mmlu", "auxiliary_train")
     split: Dataset = ds_dict["train"]  # type: ignore[assignment]
-    shuffled = TypedDataset[Any](split.shuffle(seed=seed))
+    shuffled = TypedDataset[Any](split).shuffle(seed=seed)
 
     def unwrap(item: dict[str, Any]) -> MmluExample:
         return MmluExample(**item["train"])
@@ -29,7 +29,7 @@ def load_mmlu(seed: int = 42) -> TypedIterableDataset[MmluExample]:
 def load_arc_easy(seed: int = 42) -> TypedIterableDataset[McqaExample]:
     ds_dict = load_dataset("allenai/ai2_arc", "ARC-Easy")
     split: Dataset = ds_dict["train"]  # type: ignore[assignment]
-    shuffled = TypedDataset[Any](split.shuffle(seed=seed))
+    shuffled = TypedDataset[Any](split).shuffle(seed=seed)
 
     def to_mcqa(item: dict[str, Any]) -> McqaExample:
         labels: list[str] = item["choices"]["label"]
