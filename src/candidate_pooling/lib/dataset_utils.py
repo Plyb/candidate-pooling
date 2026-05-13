@@ -1,9 +1,20 @@
+import typing
 from pathlib import Path
 from typing import Any, Callable, Mapping, cast
 
+import torch
 from datasets import Dataset, load_from_disk
 
 from candidate_pooling.lib.typed_dataset import TypedDataset
+
+
+def _is_torch_tensor_type(tp: Any) -> bool:
+    if tp is torch.Tensor:
+        return True
+    if typing.get_origin(tp) is typing.Annotated:
+        return typing.get_args(tp)[0] is torch.Tensor
+    # jaxtyping tensor types (Float[torch.Tensor, ...], etc.) expose array_type
+    return getattr(tp, "array_type", None) is torch.Tensor
 
 
 def map_and_filter_take_n[InRowT: Mapping[str, Any], OutRowT: Mapping[str, Any]](
@@ -13,7 +24,17 @@ def map_and_filter_take_n[InRowT: Mapping[str, Any], OutRowT: Mapping[str, Any]]
     target_count: int,
 ) -> TypedDataset[OutRowT]:
     lazy_pipeline = dataset._dataset.to_iterable_dataset().map(map_fn).filter(filter_fn).take(target_count)
-    return TypedDataset(cast(Dataset, Dataset.from_generator(lambda: iter(lazy_pipeline))))
+    return TypedDataset[OutRowT](cast(Dataset, Dataset.from_generator(lambda: iter(lazy_pipeline))))
+
+
+def set_format[RowT: Mapping[str, Any]]( #TODO move this out
+    dataset: TypedDataset[RowT],
+    row_type: type[RowT],
+) -> TypedDataset[RowT]:
+    hints = typing.get_type_hints(row_type, include_extras=True)
+    tensor_columns = [col for col, tp in hints.items() if _is_torch_tensor_type(tp)]
+    dataset._dataset.set_format(type="torch", columns=tensor_columns, output_all_columns=True, device='cuda')
+    return dataset
 
 
 def load_or_compute[T: Mapping[str, Any]](cache_path: Path, compute_fn: Callable[[], TypedDataset[T]]) -> TypedDataset[T]:

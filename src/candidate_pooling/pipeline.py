@@ -8,7 +8,7 @@ from transformers import LlamaForCausalLM
 from candidate_pooling.basis import basis
 from candidate_pooling.cluster import cluster
 from candidate_pooling.fingerprint import make_baseline_fn, make_fingerprint_fn
-from candidate_pooling.lib.dataset_utils import load_or_compute
+from candidate_pooling.lib.dataset_utils import load_or_compute, set_format
 from candidate_pooling.lib.tensor_cache import load_or_compute_tensor
 from candidate_pooling.lib.typed_dataset import TypedDataset
 from candidate_pooling.mining import LAYER, TOP_K, make_mining_fn
@@ -17,50 +17,60 @@ from candidate_pooling.types import BaselineResult, BasisDirection, Candidate, C
 
 MODEL_ID = "meta-llama/Llama-3.2-1B"
 CACHE_DIR = (
-    Path.home() / "nobackup" / "autodelete" / "candidate-pooling" / "pipeline_cache"
+    Path.home() / "nobackup" / "autodelete" / "candidate-pooling" / "pipeline_cache_test"
 )
 _OUTPUT_DIR = Path.home() / "nobackup" / "autodelete" / "candidate-pooling"
 
 
 def _to_dataset[T : Mapping[str, Any]](records: Iterable[T]) -> TypedDataset[T]:
-    def gen():
-        yield from records
-    return TypedDataset[T](cast(Dataset, Dataset.from_generator(gen)))
+    return TypedDataset[T](cast(Dataset, Dataset.from_list(list(records)))) # type: ignore
 
 
-def run_pipeline(n_train: int = 1000, n_probe: int = 200) -> None:
+def run_pipeline(n_train: int = 10, n_probe: int = 5) -> None:
     from candidate_pooling.data import load_mmlu_splits
     from candidate_pooling.evaluate import evaluate, visualize_clusters
 
     model = load_nnsight_model(MODEL_ID, LlamaForCausalLM)
-    train_ds, probe_ds = load_mmlu_splits(model, n_train=n_train, n_probe=n_probe)
 
     mine_fn = make_mining_fn(model, LAYER, TOP_K)
     baseline_fn = make_baseline_fn(model)
     fp_fn = make_fingerprint_fn(model, LAYER)
 
+    train_ds, probe_ds = None, None
+    def get_tok_train_and_probe() -> tuple[TypedDataset[TokenizedExample], TypedDataset[TokenizedExample]]:
+        nonlocal train_ds, probe_ds
+        if train_ds is None or probe_ds is None:
+            train_ds, probe_ds = load_mmlu_splits(model, n_train=n_train, n_probe=n_probe)
+        return train_ds, probe_ds
+
     def get_tok_train() -> TypedDataset[TokenizedExample]:
         return load_or_compute(
             CACHE_DIR / "tok_train",
-            lambda: train_ds,
+            lambda: get_tok_train_and_probe()[0],
         )
 
     def get_tok_probe() -> TypedDataset[TokenizedExample]:
         return load_or_compute(
             CACHE_DIR / "tok_probe",
-            lambda: probe_ds,
+            lambda: get_tok_train_and_probe()[1],
         )
 
     def get_mined() -> TypedDataset[Candidate]:
         return load_or_compute(
             CACHE_DIR / "mined",
-            lambda: _to_dataset(cand for ex in get_tok_train() for cand in mine_fn(ex)),
+            lambda: set_format(
+                _to_dataset(cand for ex in get_tok_train() for cand in mine_fn(ex)),
+                Candidate
+            ),
         )
 
     def get_baselines() -> TypedDataset[BaselineResult]:
         return load_or_compute(
             CACHE_DIR / "baselines",
-            lambda: _to_dataset(baseline_fn(ex) for ex in get_tok_probe()),
+            lambda: set_format(
+                _to_dataset(baseline_fn(ex) for ex in get_tok_probe()),
+                BaselineResult
+            )
         )
 
     def get_fingerprinted() -> FingerprintedCandidates:
@@ -78,7 +88,10 @@ def run_pipeline(n_train: int = 1000, n_probe: int = 200) -> None:
     def get_basis() -> TypedDataset[BasisDirection]:
         return load_or_compute(
             CACHE_DIR / "out",
-            lambda: _to_dataset(basis(get_clustered())),
+            lambda: set_format(
+                _to_dataset(basis(get_clustered())),
+                BasisDirection
+            )
         )
 
     _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

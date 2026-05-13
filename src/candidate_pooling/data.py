@@ -8,7 +8,7 @@ from transformers import PreTrainedTokenizerBase
 
 from byutils import load_dataset
 
-from candidate_pooling.lib.dataset_utils import map_and_filter_take_n
+from candidate_pooling.lib.dataset_utils import map_and_filter_take_n, set_format
 from candidate_pooling.lib.typed_dataset import TypedDataset
 from candidate_pooling.model import make_tokenize_fn
 from candidate_pooling.types import MmluExample, TokenizedExample, to_transformer_input
@@ -26,8 +26,6 @@ def load_mmlu_splits(
     split: Dataset = ds_dict["train"]  # type: ignore[assignment]
     shuffled = TypedDataset[Any](split.shuffle(seed=seed))
 
-    tokenizer: PreTrainedTokenizerBase = model.tokenizer  # type: ignore[assignment]
-    answer_ids: list[int] = tokenizer.convert_tokens_to_ids(_ANSWER_LETTERS)  # type: ignore[assignment]
     tokenize = make_tokenize_fn(model)
 
     def map_fn(item: dict[str, Any]) -> TokenizedExample:
@@ -37,7 +35,7 @@ def load_mmlu_splits(
     def filter_fn(item: TokenizedExample) -> bool:
         with torch.no_grad(), model.trace(to_transformer_input(item)):
             logits = model.output.logits.save()  # type: ignore[attr-defined]
-        return bool(logits[0, -1][answer_ids].argmax().item() == item["label_id"])
+        return bool(logits[0, -1].argmax().item() == item["label_id"])
 
     def assign_ids(offset: int) -> Callable[[TokenizedExample, int], TokenizedExample]:
         def fn(item: TokenizedExample, idx: int) -> TokenizedExample:
@@ -56,4 +54,4 @@ def load_mmlu_splits(
     probe_raw = map_and_filter_take_n(shuffled.skip(probe_start), map_fn, filter_fn, n_probe)
     probe_ds = probe_raw.map(assign_ids(probe_start), with_indices=True)
 
-    return train_ds, probe_ds
+    return set_format(train_ds, TokenizedExample), set_format(probe_ds, TokenizedExample)
