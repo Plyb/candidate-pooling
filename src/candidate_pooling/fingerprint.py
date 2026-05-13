@@ -31,8 +31,8 @@ def _compute_delta(
         logits = model.output.logits.save()  # type: ignore[attr-defined]
     steered_loss, steered_entropy = _logits_to_loss_entropy(logits[0], probe["label_id"])
     return (
-        steered_loss - torch.as_tensor(baseline["loss"]),
-        steered_entropy - torch.as_tensor(baseline["entropy"]),
+        steered_loss - baseline["loss"].cuda(),
+        steered_entropy - baseline["entropy"].cuda(),
     )
 
 
