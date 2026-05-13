@@ -1,19 +1,26 @@
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Mapping, cast
 
 import torch
 from datasets import Dataset
 from nnsight import LanguageModel
-from transformers import PreTrainedTokenizerBase
 
 from byutils import load_dataset
 
-from candidate_pooling.lib.dataset_utils import map_and_filter_take_n, set_format
+from candidate_pooling.lib.dataset_utils import set_format
 from candidate_pooling.lib.typed_dataset import TypedDataset
 from candidate_pooling.model import make_tokenize_fn
 from candidate_pooling.types import MmluExample, TokenizedExample, to_transformer_input
 
-_ANSWER_LETTERS = ["A", "B", "C", "D"]
+
+def map_and_filter_take_n[InRowT: Mapping[str, Any], OutRowT: Mapping[str, Any]](
+    dataset: TypedDataset[InRowT],
+    map_fn: Callable[[Any], OutRowT],
+    filter_fn: Callable[[OutRowT], bool],
+    target_count: int,
+) -> TypedDataset[OutRowT]:
+    lazy_pipeline = dataset.to_iterable_dataset().map(map_fn).filter(filter_fn).take(target_count)
+    return TypedDataset[OutRowT](cast(Dataset, Dataset.from_generator(lambda: iter(lazy_pipeline))))
 
 
 def load_mmlu_splits(

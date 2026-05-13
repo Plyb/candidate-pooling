@@ -17,16 +17,6 @@ def _is_torch_tensor_type(tp: Any) -> bool:
     return getattr(tp, "array_type", None) is torch.Tensor
 
 
-def map_and_filter_take_n[InRowT: Mapping[str, Any], OutRowT: Mapping[str, Any]](
-    dataset: TypedDataset[InRowT],
-    map_fn: Callable[[Any], OutRowT],
-    filter_fn: Callable[[OutRowT], bool],
-    target_count: int,
-) -> TypedDataset[OutRowT]:
-    lazy_pipeline = dataset._dataset.to_iterable_dataset().map(map_fn).filter(filter_fn).take(target_count)
-    return TypedDataset[OutRowT](cast(Dataset, Dataset.from_generator(lambda: iter(lazy_pipeline))))
-
-
 def set_format[RowT: Mapping[str, Any]]( #TODO move this out
     dataset: TypedDataset[RowT],
     row_type: type[RowT],
