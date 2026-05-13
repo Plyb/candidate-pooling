@@ -27,7 +27,7 @@ def make_tokenize_fn(model: LanguageModel) -> Callable[[MmluExample], TokenizedE
             f"{prefix}{choice}"
             for prefix, choice in zip(_CHOICE_PREFIXES, example["choices"])
         )
-        prompt = f"Question: {example['question']}\n{choices_str}\nAnswer:"
+        prompt = f"Question: {example['question']}\n{choices_str}\nAnswer: ("
         enc = tokenizer(prompt, return_tensors="pt")  # type: ignore[operator]
         return TokenizedExample(
             input_ids=enc["input_ids"][0],  # type: ignore[index]
