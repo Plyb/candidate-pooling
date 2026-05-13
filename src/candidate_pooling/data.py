@@ -26,6 +26,23 @@ def load_mmlu(seed: int = 42) -> TypedIterableDataset[MmluExample]:
     return shuffled.to_iterable_dataset().map(unwrap)
 
 
+def load_arc_easy(seed: int = 42) -> TypedIterableDataset[McqaExample]:
+    ds_dict = load_dataset("allenai/ai2_arc", "ARC-Easy")
+    split: Dataset = ds_dict["train"]  # type: ignore[assignment]
+    shuffled = TypedDataset[Any](split.shuffle(seed=seed))
+
+    def to_mcqa(item: dict[str, Any]) -> McqaExample:
+        labels: list[str] = item["choices"]["label"]
+        texts: list[str] = item["choices"]["text"]
+        return McqaExample(
+            question=item["question"],
+            choices=texts,
+            answer=labels.index(item["answerKey"]),
+        )
+
+    return shuffled.to_iterable_dataset().map(to_mcqa)
+
+
 def tokenize_dataset(
     model: LanguageModel,
     dataset: TypedIterableDataset[McqaExample],

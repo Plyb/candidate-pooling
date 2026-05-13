@@ -11,7 +11,7 @@ def _prefetch() -> None:
     from byutils import prefetch_dataset, prefetch_model
 
     prefetch_model(MODEL_ID)
-    prefetch_dataset("cais/mmlu", "auxiliary_train")
+    prefetch_dataset("allenai/ai2_arc", "ARC-Easy")
 
 
 def _run() -> None:
@@ -27,9 +27,9 @@ def main() -> None:
     slurm = SlurmConfig(
         job_type="compute",
         time="06:00:00",
-        gpus_per_node="a100:1",
+        gpus_per_node="p100:1",
         mem_per_cpu="32G",
-        qos="dw87",
+        # qos="dw87",
         nodes=1,
         ntasks_per_node=1,
     )

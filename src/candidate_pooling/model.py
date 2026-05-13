@@ -1,3 +1,4 @@
+import string
 from collections.abc import Callable
 
 from byutils import load_model
@@ -7,8 +8,7 @@ from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from candidate_pooling.types import McqaExample, TokenizedExample
 
-_ANSWER_LETTERS = ["A", "B", "C", "D"]
-_CHOICE_PREFIXES = ["A) ", "B) ", "C) ", "D) "]
+_ANSWER_LETTERS = list(string.ascii_uppercase)
 
 
 def load_nnsight_model(model_id: str, model_cls: type[PreTrainedModel]) -> LanguageModel:
@@ -24,8 +24,8 @@ def make_tokenize_fn(model: LanguageModel) -> Callable[[McqaExample, int], Token
 
     def tokenize(example: McqaExample, index: int) -> TokenizedExample:
         choices_str = "\n".join(
-            f"{prefix}{choice}"
-            for prefix, choice in zip(_CHOICE_PREFIXES, example["choices"])
+            f"{_ANSWER_LETTERS[i]}) {choice}"
+            for i, choice in enumerate(example["choices"])
         )
         prompt = f"Question: {example['question']}\n{choices_str}\nAnswer: ("
         enc = tokenizer(prompt, return_tensors="pt")  # type: ignore[operator]

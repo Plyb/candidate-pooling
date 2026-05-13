@@ -27,7 +27,7 @@ def _to_dataset[T : Mapping[str, Any]](records: Iterable[T]) -> TypedDataset[T]:
 
 
 def run_pipeline(n_train: int = 10, n_probe: int = 5) -> None:
-    from candidate_pooling.data import load_mmlu, tokenize_dataset
+    from candidate_pooling.data import load_arc_easy, tokenize_dataset
     from candidate_pooling.evaluate import evaluate, visualize_clusters
 
     model = load_nnsight_model(MODEL_ID, LlamaForCausalLM)
@@ -40,7 +40,7 @@ def run_pipeline(n_train: int = 10, n_probe: int = 5) -> None:
     def get_tok_splits() -> tuple[TypedDataset[TokenizedExample], TypedDataset[TokenizedExample]]:
         nonlocal train_ds, probe_ds
         if train_ds is None or probe_ds is None:
-            train_ds, probe_ds = tokenize_dataset(model, load_mmlu(), n_train, n_probe)
+            train_ds, probe_ds = tokenize_dataset(model, load_arc_easy(), n_train, n_probe)
         return train_ds, probe_ds
 
     def get_tok_train() -> TypedDataset[TokenizedExample]:
