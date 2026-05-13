@@ -24,26 +24,31 @@ class TypedDataset[RowT: Mapping[str, Any]]:
         return self._dataset[index]  # type: ignore[return-value]
 
     def skip(self, n: int) -> TypedDataset[RowT]:
-        return TypedDataset[RowT](self._dataset.select(range(n, len(self._dataset))))
+        # Note: we don't do `TypedDataset[RowT]` here because dill trips on it when trying to fingerprint the dataset.
+        # It also doesn't actually buy us any static type safety, since the constructor doesn't mention `RowT` (there isn't
+        # anything to check against to see if the TypedDataset is being constructed correctly).
+        # Python's runtime semantics mean that `TypedDataset[RowT]` only references the `TypeVar` `RowT`, not the actual
+        # concrete type of the instance on which this (and other methods) are called.
+        return TypedDataset(self._dataset.select(range(n, len(self._dataset))))
 
     def take(self, n: int) -> TypedDataset[RowT]:
-        return TypedDataset[RowT](self._dataset.select(range(n)))
+        return TypedDataset(self._dataset.select(range(n)))
 
     @overload
     def map[OutRow: Mapping[str, Any]](self, fn: Callable[[RowT], OutRow], *, with_indices: Literal[False] = ..., **kwargs: Any) -> TypedDataset[OutRow]: ...
     @overload
     def map[OutRow: Mapping[str, Any]](self, fn: Callable[[RowT, int], OutRow], *, with_indices: Literal[True], **kwargs: Any) -> TypedDataset[OutRow]: ...
     def map[OutRow: Mapping[str, Any]](self, fn: Callable[..., OutRow], *, with_indices: bool = False, **kwargs: Any) -> TypedDataset[OutRow]:
-        return TypedDataset[OutRow](self._dataset.map(fn, with_indices=with_indices, **kwargs))
+        return TypedDataset(self._dataset.map(fn, with_indices=with_indices, **kwargs))
 
     def filter(self, fn: Callable[[RowT], bool], **kwargs: Any) -> TypedDataset[RowT]:
-        return TypedDataset[RowT](self._dataset.filter(fn, **kwargs))
+        return TypedDataset(self._dataset.filter(fn, **kwargs))
 
     def shuffle(self, seed: int | None = None) -> TypedDataset[RowT]:
-        return TypedDataset[RowT](self._dataset.shuffle(seed=seed))
+        return TypedDataset(self._dataset.shuffle(seed=seed))
 
     def to_iterable_dataset(self, num_shards: int | None = 1) -> TypedIterableDataset[RowT]:
-        return TypedIterableDataset[RowT](self._dataset.to_iterable_dataset(num_shards=num_shards))
+        return TypedIterableDataset(self._dataset.to_iterable_dataset(num_shards=num_shards))
 
     def save_to_disk(
         self,
@@ -64,20 +69,20 @@ class TypedIterableDataset[RowT: Mapping[str, Any]]:
         return iter(self._dataset)  # type: ignore[return-value]
 
     def skip(self, n: int) -> TypedIterableDataset[RowT]:
-        return TypedIterableDataset[RowT](self._dataset.skip(n))
+        return TypedIterableDataset(self._dataset.skip(n))
 
     def take(self, n: int) -> TypedIterableDataset[RowT]:
-        return TypedIterableDataset[RowT](self._dataset.take(n))
+        return TypedIterableDataset(self._dataset.take(n))
 
     @overload
     def map[OutRow: Mapping[str, Any]](self, fn: Callable[[RowT], OutRow], *, with_indices: Literal[False] = ..., **kwargs: Any) -> TypedIterableDataset[OutRow]: ...
     @overload
     def map[OutRow: Mapping[str, Any]](self, fn: Callable[[RowT, int], OutRow], *, with_indices: Literal[True], **kwargs: Any) -> TypedIterableDataset[OutRow]: ...
     def map[OutRow: Mapping[str, Any]](self, fn: Callable[..., OutRow], *, with_indices: bool = False, **kwargs: Any) -> TypedIterableDataset[OutRow]:
-        return TypedIterableDataset[OutRow](self._dataset.map(fn, with_indices=with_indices, **kwargs))
+        return TypedIterableDataset(self._dataset.map(fn, with_indices=with_indices, **kwargs))
 
     def filter(self, fn: Callable[[RowT], bool], **kwargs: Any) -> TypedIterableDataset[RowT]:
-        return TypedIterableDataset[RowT](self._dataset.filter(fn, **kwargs))
+        return TypedIterableDataset(self._dataset.filter(fn, **kwargs))
 
     def shuffle(self, seed: int | None = None, buffer_size: int = 1000) -> TypedIterableDataset[RowT]:
-        return TypedIterableDataset[RowT](self._dataset.shuffle(seed=seed, buffer_size=buffer_size))
+        return TypedIterableDataset(self._dataset.shuffle(seed=seed, buffer_size=buffer_size))
