@@ -25,4 +25,5 @@ def basis(
             cluster_id=cluster_id,
             loss_fingerprint=candidates["loss_deltas"][best],
             entropy_fingerprint=candidates["entropy_deltas"][best],
+            example_id=candidates["example_id"][best]
         )

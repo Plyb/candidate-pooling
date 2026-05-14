@@ -57,3 +57,4 @@ class BasisDirection(TypedDict):
     cluster_id: int
     loss_fingerprint: Float[Tensor, "n_tokens_in_probe"]
     entropy_fingerprint: Float[Tensor, "n_tokens_in_probe"]
+    example_id: int
