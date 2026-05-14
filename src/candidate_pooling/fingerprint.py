@@ -1,10 +1,11 @@
 from collections.abc import Callable
-from typing import Iterable
+from typing import Collection, Iterable
 
 import torch
 from jaxtyping import Float
 from nnsight import LanguageModel
 from torch import Tensor
+from tqdm import tqdm
 
 from candidate_pooling.mining import LAYER
 from candidate_pooling.types import (
@@ -46,6 +47,31 @@ def _logits_to_loss_entropy(
     return loss, entropy
 
 
+def make_mean_activation_fn(
+    model: LanguageModel,
+    layer: int = LAYER,
+) -> Callable[[Iterable[TokenizedExample]], Float[Tensor, "d_model"]]:
+
+    def compute_mean_activation(
+        probe_examples: Iterable[TokenizedExample],
+    ) -> Float[Tensor, "d_model"]:
+        total: Float[Tensor, "d_model"] | None = None
+        count = 0
+        for example in tqdm(probe_examples):
+            with torch.no_grad(), model.trace(to_transformer_input(example)):
+                hidden = model.model.layers[layer].output[0].save()  # type: ignore[attr-defined]
+            mask = example["attention_mask"].to(hidden.device).bool()
+            valid = hidden[mask]
+            summed = valid.sum(dim=0)
+            total = summed if total is None else total + summed
+            count += int(mask.sum().item())
+        if total is None or count == 0:
+            raise ValueError("mean activation requires at least one probe token")
+        return total / count
+
+    return compute_mean_activation
+
+
 def make_baseline_fn(model: LanguageModel) -> Callable[[TokenizedExample], BaselineResult]:
 
     def compute_baseline(example: TokenizedExample) -> BaselineResult:
@@ -63,10 +89,10 @@ def make_fingerprint_fn(
     model: LanguageModel,
     layer: int = LAYER,
     alpha: float = _ALPHA_DEFAULT,
-) -> Callable[[Iterable[Candidate], Iterable[TokenizedExample], Iterable[BaselineResult]], FingerprintedCandidates]:
+) -> Callable[[Collection[Candidate], Iterable[TokenizedExample], Iterable[BaselineResult]], FingerprintedCandidates]:
 
     def fingerprint(
-        candidates: Iterable[Candidate],
+        candidates: Collection[Candidate],
         probe_examples: Iterable[TokenizedExample],
         baselines: Iterable[BaselineResult],
     ) -> FingerprintedCandidates:
@@ -77,7 +103,7 @@ def make_fingerprint_fn(
         all_loss_deltas: list[Float[Tensor, "n_tokens_in_probe"]] = []
         all_entropy_deltas: list[Float[Tensor, "n_tokens_in_probe"]] = []
 
-        for candidate in candidates:
+        for candidate in tqdm(candidates):
             v: Float[Tensor, "d_model"] = torch.as_tensor(candidate["vector"]).cuda()
             deltas = [
                 _compute_delta(model, probe, baseline, layer, v, alpha)

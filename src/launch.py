@@ -17,7 +17,7 @@ def _prefetch() -> None:
 def _run() -> None:
     from candidate_pooling.pipeline import run_pipeline
 
-    run_pipeline()
+    run_pipeline(850, 200)
 
 
 def main() -> None:
@@ -27,9 +27,9 @@ def main() -> None:
     slurm = SlurmConfig(
         job_type="compute",
         time="06:00:00",
-        gpus_per_node="p100:1",
+        gpus_per_node="h100:1",
         mem_per_cpu="32G",
-        # qos="dw87",
+        qos="cs",
         nodes=1,
         ntasks_per_node=1,
     )
