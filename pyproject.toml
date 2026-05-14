@@ -7,23 +7,33 @@ name = "candidate_pooling"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "mirror_pipeline @ file:///home/kobyjl/MIRROR-Pipeline",
+    "mirror_pipeline",
     "torch==2.11.0+cu126",
     "scikit-learn==1.8.0",
     "numpy==2.4.4",
-    "byutils @ git+https://github.com/Plyb/byutils.git",
+    "byutils",
     "nnsight==0.7.0",
     "jaxtyping==0.3.3",
     "matplotlib==3.10.9",
     "umap-learn==0.5.12",
-    "notebook==7.5.6",
-    "jupyterlab==4.5.7",
+    "notebook==7.5.5",
+    "jupyterlab==4.5.6",
     "ipykernel==7.2.0",
     "ipywidgets==8.1.8",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = ["pyright==1.1.409"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+mirror_pipeline = { path = "/home/kobyjl/MIRROR-Pipeline", editable = true }
+byutils = { git = "https://github.com/Plyb/byutils.git" }

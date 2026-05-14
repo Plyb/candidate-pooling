@@ -1,4 +1,6 @@
 # Environment
+.venv/
+# keeping this around for now since mirror's slurm launcher expects it to be here
 .env/
 __pycache__/
 *.py[cod]
