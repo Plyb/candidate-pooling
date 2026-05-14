@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from typing import Collection, Iterable
+from typing import Collection, Iterable, Iterator
 
 import torch
 from jaxtyping import Float
@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 from candidate_pooling.mining import LAYER
 from candidate_pooling.types import (
+    AnnotatedCandidate,
     BaselineResult,
     Candidate,
     FingerprintedCandidates,
@@ -16,7 +17,7 @@ from candidate_pooling.types import (
     to_transformer_input,
 )
 
-ALPHA_DEFAULT = 10.0
+ALPHA_DEFAULT = 0.25
 
 
 def compute_delta(
@@ -25,10 +26,11 @@ def compute_delta(
     baseline: BaselineResult,
     layer: int,
     v: Float[Tensor, "d_model"],
+    std_dev: float,
     alpha: float = ALPHA_DEFAULT,
 ) -> tuple[Float[Tensor, "seq"], Float[Tensor, "seq"]]:
     with torch.no_grad(), model.trace(to_transformer_input(probe)):
-        model.model.layers[layer].output[0, -1] += alpha * v  # type: ignore[attr-defined]
+        model.model.layers[layer].output[0, -1] += alpha * std_dev * v  # type: ignore[attr-defined]
         logits = model.output.logits.save()  # type: ignore[attr-defined]
     steered_loss, steered_entropy = _logits_to_loss_entropy(logits[0], probe["label_id"])
     return (
@@ -45,6 +47,46 @@ def _logits_to_loss_entropy(
     loss = -probs[:, label_id].log()
     entropy = -(probs * probs.clamp_min(1e-9).log()).sum(dim=-1)
     return loss, entropy
+
+
+def make_covariance_fn(
+    model: LanguageModel,
+    layer: int = LAYER,
+) -> Callable[[Iterable[TokenizedExample]], Float[Tensor, "d_model d_model"]]:
+
+    def compute_covariance(
+        probe_examples: Iterable[TokenizedExample],
+    ) -> Float[Tensor, "d_model d_model"]:
+        sum_h: Float[Tensor, "d_model"] | None = None
+        sum_outer: Float[Tensor, "d_model d_model"] | None = None
+        count = 0
+        for example in tqdm(probe_examples):
+            with torch.no_grad(), model.trace(to_transformer_input(example)):
+                hidden = model.model.layers[layer].output[0].save()  # type: ignore[attr-defined]
+            mask = example["attention_mask"].to(hidden.device).bool()
+            valid = hidden[mask].float()  # fp32 to keep outer-product accumulation numerically stable
+            summed = valid.sum(dim=0)
+            outer = valid.T @ valid
+            sum_h = summed if sum_h is None else sum_h + summed
+            sum_outer = outer if sum_outer is None else sum_outer + outer
+            count += int(mask.sum().item())
+        if sum_h is None or sum_outer is None or count == 0:
+            raise ValueError("covariance requires at least one probe token")
+        mean = sum_h / count
+        return sum_outer / count - torch.outer(mean, mean)
+
+    return compute_covariance
+
+
+def annotate_with_std_dev(
+    candidates: Iterable[Candidate],
+    covariance: Float[Tensor, "d_model d_model"],
+) -> Iterator[AnnotatedCandidate]:
+    cov = covariance.to("cuda").float()
+    for candidate in candidates:
+        v = torch.as_tensor(candidate["vector"]).cuda().float()
+        std_dev = float(torch.sqrt((v @ cov @ v).clamp_min(0.0)).item())
+        yield AnnotatedCandidate(**candidate, std_dev=std_dev)
 
 
 def make_mean_activation_fn(
@@ -89,10 +131,10 @@ def make_fingerprint_fn(
     model: LanguageModel,
     layer: int = LAYER,
     alpha: float = ALPHA_DEFAULT,
-) -> Callable[[Collection[Candidate], Iterable[TokenizedExample], Iterable[BaselineResult]], FingerprintedCandidates]:
+) -> Callable[[Collection[AnnotatedCandidate], Iterable[TokenizedExample], Iterable[BaselineResult]], FingerprintedCandidates]:
 
     def fingerprint(
-        candidates: Collection[Candidate],
+        candidates: Collection[AnnotatedCandidate],
         probe_examples: Iterable[TokenizedExample],
         baselines: Iterable[BaselineResult],
     ) -> FingerprintedCandidates:
@@ -100,13 +142,15 @@ def make_fingerprint_fn(
         layers: list[int] = []
         example_ids: list[int] = []
         token_positions: list[int] = []
+        std_devs: list[float] = []
         all_loss_deltas: list[Float[Tensor, "n_tokens_in_probe"]] = []
         all_entropy_deltas: list[Float[Tensor, "n_tokens_in_probe"]] = []
 
         for candidate in tqdm(candidates):
             v: Float[Tensor, "d_model"] = torch.as_tensor(candidate["vector"]).cuda()
+            std_dev = candidate["std_dev"]
             deltas = [
-                compute_delta(model, probe, baseline, layer, v, alpha)
+                compute_delta(model, probe, baseline, layer, v, std_dev, alpha)
                 for probe, baseline in zip(probe_examples, baselines)
             ]
             loss_d, entropy_d = zip(*deltas)
@@ -114,9 +158,10 @@ def make_fingerprint_fn(
             layers.append(candidate["layer"])
             example_ids.append(candidate["example_id"])
             token_positions.append(candidate["token_pos"])
+            std_devs.append(std_dev)
             all_loss_deltas.append(torch.cat(list(loss_d)))
             all_entropy_deltas.append(torch.cat(list(entropy_d)))
-        
+
         return FingerprintedCandidates(
             vector=torch.stack(vectors),
             layer=layers,
@@ -124,6 +169,7 @@ def make_fingerprint_fn(
             token_pos=token_positions,
             loss_deltas=torch.stack(all_loss_deltas),
             entropy_deltas=torch.stack(all_entropy_deltas),
+            std_dev=std_devs,
         )
 
     return fingerprint

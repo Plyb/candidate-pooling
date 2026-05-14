@@ -309,7 +309,9 @@ def example_fingerprint_widget(
         tokenized = _to_tokenized(train_list[ex_idx])
         baseline = baseline_fn(tokenized)
         v = torch.as_tensor(basis["vector"], dtype=torch.float32).cuda()
-        loss_delta, _ = compute_delta(model, tokenized, baseline, layer, v, alpha)
+        loss_delta, _ = compute_delta(
+            model, tokenized, baseline, layer, v, float(basis["std_dev"]), alpha
+        )
         return loss_delta.detach().float().cpu().numpy()
 
     return _make_example_selector_widget(train_list, probe_list, tokenizer, basis_list, compute, "Δloss")

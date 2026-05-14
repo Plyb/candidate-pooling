@@ -33,6 +33,10 @@ class Candidate(TypedDict):
     token_pos: int
 
 
+class AnnotatedCandidate(Candidate):
+    std_dev: float  # sqrt(v^T C v) where C is probe-set activation covariance at layer
+
+
 class BaselineResult(TypedDict):
     loss: Float[Tensor, "seq"]
     entropy: Float[Tensor, "seq"]
@@ -46,6 +50,7 @@ class FingerprintedCandidates(TypedDict):
     token_pos: list[int]
     loss_deltas: Float[Tensor, "n_candidates n_tokens_in_probe"]
     entropy_deltas: Float[Tensor, "n_candidates n_tokens_in_probe"]
+    std_dev: list[float]
 
 
 class ClusteredCandidates(FingerprintedCandidates):
@@ -58,3 +63,4 @@ class BasisDirection(TypedDict):
     loss_fingerprint: Float[Tensor, "n_tokens_in_probe"]
     entropy_fingerprint: Float[Tensor, "n_tokens_in_probe"]
     example_id: int
+    std_dev: float

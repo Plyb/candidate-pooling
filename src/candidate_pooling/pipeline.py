@@ -7,13 +7,27 @@ from transformers import LlamaForCausalLM
 
 from candidate_pooling.basis import basis
 from candidate_pooling.cluster import cluster
-from candidate_pooling.fingerprint import make_baseline_fn, make_fingerprint_fn, make_mean_activation_fn
+from candidate_pooling.fingerprint import (
+    annotate_with_std_dev,
+    make_baseline_fn,
+    make_covariance_fn,
+    make_fingerprint_fn,
+    make_mean_activation_fn,
+)
 from candidate_pooling.lib.dataset_utils import load_or_compute, set_format
 from candidate_pooling.lib.tensor_cache import load_or_compute_tensor
 from candidate_pooling.lib.typed_dataset import TypedDataset
 from candidate_pooling.mining import LAYER, TOP_K, make_mining_fn
 from candidate_pooling.model import load_nnsight_model
-from candidate_pooling.types import BaselineResult, BasisDirection, Candidate, ClusteredCandidates, FingerprintedCandidates, TokenizedExample
+from candidate_pooling.types import (
+    AnnotatedCandidate,
+    BaselineResult,
+    BasisDirection,
+    Candidate,
+    ClusteredCandidates,
+    FingerprintedCandidates,
+    TokenizedExample,
+)
 
 MODEL_ID = "meta-llama/Llama-3.2-1B"
 CACHE_DIR = (
@@ -36,6 +50,7 @@ def run_pipeline(n_train: int = 1000, n_probe: int = 200) -> None:
     baseline_fn = make_baseline_fn(model)
     fp_fn = make_fingerprint_fn(model, LAYER)
     mean_act_fn = make_mean_activation_fn(model, LAYER)
+    cov_fn = make_covariance_fn(model, LAYER)
 
     train_ds, probe_ds = None, None
     def get_tok_splits() -> tuple[TypedDataset[TokenizedExample], TypedDataset[TokenizedExample]]:
@@ -80,10 +95,25 @@ def run_pipeline(n_train: int = 1000, n_probe: int = 200) -> None:
             lambda: mean_act_fn(get_tok_probe()),
         )
 
+    def get_probe_covariance():
+        return load_or_compute_tensor(
+            CACHE_DIR / "probe_covariance.pt",
+            lambda: cov_fn(get_tok_probe()),
+        )
+
+    def get_annotated() -> TypedDataset[AnnotatedCandidate]:
+        return load_or_compute(
+            CACHE_DIR / "annotated",
+            lambda: set_format(
+                _to_dataset(annotate_with_std_dev(get_mined(), get_probe_covariance())),
+                AnnotatedCandidate,
+            ),
+        )
+
     def get_fingerprinted() -> FingerprintedCandidates:
         return load_or_compute_tensor(
             CACHE_DIR / "fp.pt",
-            lambda: fp_fn(get_mined(), get_tok_probe(), get_baselines()),
+            lambda: fp_fn(get_annotated(), get_tok_probe(), get_baselines()),
         )
 
     def get_clustered() -> ClusteredCandidates:
