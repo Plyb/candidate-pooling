@@ -13,6 +13,25 @@ LAYER = 12
 TOP_K = 5
 
 
+def compute_neg_gradients(
+    model: LanguageModel,
+    example: TokenizedExample,
+    layer: int = LAYER,
+) -> Float[Tensor, "seq d_model"]:
+    label_id_tensor = torch.as_tensor([example["label_id"]], device="cuda")
+    with model.trace(to_transformer_input(example)):
+        hidden = model.model.layers[layer].output  # type: ignore[attr-defined]
+        hidden.requires_grad_(True)
+        logits = model.lm_head.output  # type: ignore[attr-defined]
+        loss = F.cross_entropy(
+            logits[0, -1].unsqueeze(0),
+            label_id_tensor,
+        )
+        with loss.backward():  # type: ignore
+            hidden_grad = hidden.grad.save()  # [seq, d_model]
+    return -hidden_grad[0]
+
+
 def make_mining_fn(
     model: LanguageModel,
     layer: int = LAYER,
@@ -20,23 +39,11 @@ def make_mining_fn(
 ) -> Callable[[TokenizedExample], Iterator[Candidate]]:
 
     def mine(example: TokenizedExample) -> Iterator[Candidate]:
-        label_id_tensor = torch.as_tensor([example["label_id"]], device="cuda")
-        with model.trace(to_transformer_input(example)) as tracer:
-            hidden = model.model.layers[layer].output  # type: ignore[attr-defined]
-            hidden.requires_grad_(True)
-            logits = model.lm_head.output  # type: ignore[attr-defined]
-            loss = F.cross_entropy(
-                logits[0, -1].unsqueeze(0),
-                label_id_tensor,
-            )
-            with loss.backward(): # type: ignore
-                hidden_grad = hidden.grad.save()  # [seq, d_model]
-
-        neg_grad_val: Float[Tensor, "seq d_model"] = -hidden_grad[0]
-        norms: Float[Tensor, "seq"] = neg_grad_val.norm(dim=-1)
+        neg_grad: Float[Tensor, "seq d_model"] = compute_neg_gradients(model, example, layer)
+        norms: Float[Tensor, "seq"] = neg_grad.norm(dim=-1)
         top_positions = norms.topk(top_k).indices.tolist()
         for pos in top_positions:
-            v = neg_grad_val[pos]
+            v = neg_grad[pos]
             yield Candidate(
                 vector=v / v.norm(),
                 layer=layer,

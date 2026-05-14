@@ -16,16 +16,16 @@ from candidate_pooling.types import (
     to_transformer_input,
 )
 
-_ALPHA_DEFAULT = 10.0
+ALPHA_DEFAULT = 10.0
 
 
-def _compute_delta(
+def compute_delta(
     model: LanguageModel,
     probe: TokenizedExample,
     baseline: BaselineResult,
     layer: int,
     v: Float[Tensor, "d_model"],
-    alpha: float,
+    alpha: float = ALPHA_DEFAULT,
 ) -> tuple[Float[Tensor, "seq"], Float[Tensor, "seq"]]:
     with torch.no_grad(), model.trace(to_transformer_input(probe)):
         model.model.layers[layer].output[0, -1] += alpha * v  # type: ignore[attr-defined]
@@ -88,7 +88,7 @@ def make_baseline_fn(model: LanguageModel) -> Callable[[TokenizedExample], Basel
 def make_fingerprint_fn(
     model: LanguageModel,
     layer: int = LAYER,
-    alpha: float = _ALPHA_DEFAULT,
+    alpha: float = ALPHA_DEFAULT,
 ) -> Callable[[Collection[Candidate], Iterable[TokenizedExample], Iterable[BaselineResult]], FingerprintedCandidates]:
 
     def fingerprint(
@@ -106,7 +106,7 @@ def make_fingerprint_fn(
         for candidate in tqdm(candidates):
             v: Float[Tensor, "d_model"] = torch.as_tensor(candidate["vector"]).cuda()
             deltas = [
-                _compute_delta(model, probe, baseline, layer, v, alpha)
+                compute_delta(model, probe, baseline, layer, v, alpha)
                 for probe, baseline in zip(probe_examples, baselines)
             ]
             loss_d, entropy_d = zip(*deltas)
