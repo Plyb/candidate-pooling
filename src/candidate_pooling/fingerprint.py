@@ -2,6 +2,7 @@ from collections.abc import Callable
 from typing import Collection, Iterable, Iterator
 
 import torch
+import torch.nn.functional as F
 from jaxtyping import Float
 from nnsight import LanguageModel
 from torch import Tensor
@@ -17,7 +18,38 @@ from candidate_pooling.types import (
     to_transformer_input,
 )
 
-ALPHA_DEFAULT = 0.25
+ALPHA_DEFAULT = 1.0
+
+
+def _final_token_loss_entropy(
+    logits: Float[Tensor, "seq vocab"],
+    label_id: int,
+) -> tuple[Float[Tensor, ""], Float[Tensor, ""]]:
+    final = logits[-1]
+    loss = F.cross_entropy(final.unsqueeze(0), torch.tensor([label_id], device=final.device))
+    entropy = torch.distributions.Categorical(logits=final).entropy()
+    return loss, entropy
+
+
+def compute_jacobians(
+    model: LanguageModel,
+    probe: TokenizedExample,
+    layer: int,
+) -> tuple[Float[Tensor, "seq d_model"], Float[Tensor, "seq d_model"]]:
+    label_id = probe["label_id"]
+
+    def _grad(which: str) -> Float[Tensor, "seq d_model"]:
+        with model.trace(to_transformer_input(probe)):
+            hidden = model.model.layers[layer].output  # type: ignore[attr-defined]
+            hidden.requires_grad_(True)
+            logits = model.lm_head.output[0]  # type: ignore[attr-defined]
+            loss, entropy = _final_token_loss_entropy(logits, label_id)
+            scalar = loss if which == "loss" else entropy
+            with scalar.backward():  # type: ignore[union-attr]
+                grad = hidden.grad.save()
+        return grad[0]
+
+    return _grad("loss"), _grad("entropy")
 
 
 def compute_delta(
@@ -29,24 +61,24 @@ def compute_delta(
     std_dev: float,
     alpha: float = ALPHA_DEFAULT,
 ) -> tuple[Float[Tensor, "seq"], Float[Tensor, "seq"]]:
-    with torch.no_grad(), model.trace(to_transformer_input(probe)):
-        model.model.layers[layer].output[0, -1] += alpha * std_dev * v  # type: ignore[attr-defined]
-        logits = model.output.logits.save()  # type: ignore[attr-defined]
-    steered_loss, steered_entropy = _logits_to_loss_entropy(logits[0], probe["label_id"])
-    return (
-        steered_loss - baseline["loss"].cuda(),
-        steered_entropy - baseline["entropy"].cuda(),
-    )
-
-
-def _logits_to_loss_entropy(
-    logits: Float[Tensor, "seq vocab"],
-    label_id: int,
-) -> tuple[Float[Tensor, "seq"], Float[Tensor, "seq"]]:
-    probs = logits.softmax(dim=-1)
-    loss = -probs[:, label_id].log()
-    entropy = -(probs * probs.clamp_min(1e-9).log()).sum(dim=-1)
-    return loss, entropy
+    """Validation reference: for each token position t, steer the layer-`layer` activation
+    at position t by alpha*std_dev*v and return the resulting change in final-token loss
+    and entropy. Loops over positions, so cost is O(seq) forward passes per candidate.
+    The Jacobian path in `make_fingerprint_fn` is a linearization of this."""
+    seq = int(probe["input_ids"].shape[0])
+    baseline_loss = baseline["loss"].cuda()
+    baseline_entropy = baseline["entropy"].cuda()
+    perturbation = (alpha * std_dev) * v
+    delta_loss = torch.empty(seq, device="cuda")
+    delta_entropy = torch.empty(seq, device="cuda")
+    for t in range(seq):
+        with torch.no_grad(), model.trace(to_transformer_input(probe)):
+            model.model.layers[layer].output[0, t] += perturbation  # type: ignore[attr-defined]
+            logits = model.output.logits.save()  # type: ignore[attr-defined]
+        loss_t, entropy_t = _final_token_loss_entropy(logits[0], probe["label_id"])
+        delta_loss[t] = loss_t - baseline_loss
+        delta_entropy[t] = entropy_t - baseline_entropy
+    return delta_loss, delta_entropy
 
 
 def make_covariance_fn(
@@ -119,7 +151,7 @@ def make_baseline_fn(model: LanguageModel) -> Callable[[TokenizedExample], Basel
     def compute_baseline(example: TokenizedExample) -> BaselineResult:
         with torch.no_grad(), model.trace(to_transformer_input(example)):
             logits = model.output.logits.save()  # type: ignore[attr-defined]
-        loss, entropy = _logits_to_loss_entropy(logits[0], example["label_id"])
+        loss, entropy = _final_token_loss_entropy(logits[0], example["label_id"])
         return BaselineResult(
             loss=loss, entropy=entropy, example_id=example["example_id"]
         )
@@ -130,46 +162,32 @@ def make_baseline_fn(model: LanguageModel) -> Callable[[TokenizedExample], Basel
 def make_fingerprint_fn(
     model: LanguageModel,
     layer: int = LAYER,
-    alpha: float = ALPHA_DEFAULT,
-) -> Callable[[Collection[AnnotatedCandidate], Iterable[TokenizedExample], Iterable[BaselineResult]], FingerprintedCandidates]:
+) -> Callable[[Collection[AnnotatedCandidate], Iterable[TokenizedExample]], FingerprintedCandidates]:
 
     def fingerprint(
         candidates: Collection[AnnotatedCandidate],
         probe_examples: Iterable[TokenizedExample],
-        baselines: Iterable[BaselineResult],
     ) -> FingerprintedCandidates:
-        vectors: list[Float[Tensor, "d_model"]] = []
-        layers: list[int] = []
-        example_ids: list[int] = []
-        token_positions: list[int] = []
-        std_devs: list[float] = []
-        all_loss_deltas: list[Float[Tensor, "n_tokens_in_probe"]] = []
-        all_entropy_deltas: list[Float[Tensor, "n_tokens_in_probe"]] = []
+        candidate_list = list(candidates)
+        vectors: Float[Tensor, "n_candidates d_model"] = torch.stack(
+            [torch.as_tensor(c["vector"]).cuda().float() for c in candidate_list]
+        )
 
-        for candidate in tqdm(candidates):
-            v: Float[Tensor, "d_model"] = torch.as_tensor(candidate["vector"]).cuda()
-            std_dev = candidate["std_dev"]
-            deltas = [
-                compute_delta(model, probe, baseline, layer, v, std_dev, alpha)
-                for probe, baseline in zip(probe_examples, baselines)
-            ]
-            loss_d, entropy_d = zip(*deltas)
-            vectors.append(candidate["vector"])
-            layers.append(candidate["layer"])
-            example_ids.append(candidate["example_id"])
-            token_positions.append(candidate["token_pos"])
-            std_devs.append(std_dev)
-            all_loss_deltas.append(torch.cat(list(loss_d)))
-            all_entropy_deltas.append(torch.cat(list(entropy_d)))
+        loss_blocks: list[Float[Tensor, "n_candidates seq"]] = []
+        entropy_blocks: list[Float[Tensor, "n_candidates seq"]] = []
+        for probe in tqdm(probe_examples):
+            jac_loss, jac_entropy = compute_jacobians(model, probe, layer)
+            loss_blocks.append(vectors @ jac_loss.float().T)
+            entropy_blocks.append(vectors @ jac_entropy.float().T)
 
         return FingerprintedCandidates(
-            vector=torch.stack(vectors),
-            layer=layers,
-            example_id=example_ids,
-            token_pos=token_positions,
-            loss_deltas=torch.stack(all_loss_deltas),
-            entropy_deltas=torch.stack(all_entropy_deltas),
-            std_dev=std_devs,
+            vector=torch.stack([torch.as_tensor(c["vector"]) for c in candidate_list]),
+            layer=[c["layer"] for c in candidate_list],
+            example_id=[c["example_id"] for c in candidate_list],
+            token_pos=[c["token_pos"] for c in candidate_list],
+            loss_deltas=torch.cat(loss_blocks, dim=1),
+            entropy_deltas=torch.cat(entropy_blocks, dim=1),
+            std_dev=[c["std_dev"] for c in candidate_list],
         )
 
     return fingerprint

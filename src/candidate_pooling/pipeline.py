@@ -9,7 +9,6 @@ from candidate_pooling.basis import basis
 from candidate_pooling.cluster import cluster
 from candidate_pooling.fingerprint import (
     annotate_with_std_dev,
-    make_baseline_fn,
     make_covariance_fn,
     make_fingerprint_fn,
     make_mean_activation_fn,
@@ -21,7 +20,6 @@ from candidate_pooling.mining import LAYER, TOP_K, make_mining_fn
 from candidate_pooling.model import load_nnsight_model
 from candidate_pooling.types import (
     AnnotatedCandidate,
-    BaselineResult,
     BasisDirection,
     Candidate,
     ClusteredCandidates,
@@ -47,7 +45,6 @@ def run_pipeline(n_train: int = 1000, n_probe: int = 200) -> None:
     model = load_nnsight_model(MODEL_ID, LlamaForCausalLM)
 
     mine_fn = make_mining_fn(model, LAYER, TOP_K)
-    baseline_fn = make_baseline_fn(model)
     fp_fn = make_fingerprint_fn(model, LAYER)
     mean_act_fn = make_mean_activation_fn(model, LAYER)
     cov_fn = make_covariance_fn(model, LAYER)
@@ -80,15 +77,6 @@ def run_pipeline(n_train: int = 1000, n_probe: int = 200) -> None:
             ),
         )
 
-    def get_baselines() -> TypedDataset[BaselineResult]:
-        return load_or_compute(
-            CACHE_DIR / "baselines",
-            lambda: set_format(
-                _to_dataset(baseline_fn(ex) for ex in get_tok_probe()),
-                BaselineResult
-            )
-        )
-
     def get_probe_mean_activation():
         return load_or_compute_tensor(
             CACHE_DIR / "probe_mean_activation.pt",
@@ -113,7 +101,7 @@ def run_pipeline(n_train: int = 1000, n_probe: int = 200) -> None:
     def get_fingerprinted() -> FingerprintedCandidates:
         return load_or_compute_tensor(
             CACHE_DIR / "fp.pt",
-            lambda: fp_fn(get_annotated(), get_tok_probe(), get_baselines()),
+            lambda: fp_fn(get_annotated(), get_tok_probe()),
         )
 
     def get_clustered() -> ClusteredCandidates:

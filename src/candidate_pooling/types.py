@@ -38,8 +38,8 @@ class AnnotatedCandidate(Candidate):
 
 
 class BaselineResult(TypedDict):
-    loss: Float[Tensor, "seq"]
-    entropy: Float[Tensor, "seq"]
+    loss: Float[Tensor, ""]  # final-token cross-entropy against label_id
+    entropy: Float[Tensor, ""]  # final-token predictive entropy
     example_id: int
 
 
