@@ -486,6 +486,62 @@ def example_steering_curve_widget(
     ])
 
 
+def logit_lens_widget(
+    cache_path: Path,
+    model: LanguageModel,
+    top_k: int = 20,
+) -> widgets.Widget:
+    basis_list = _load_basis(cache_path)
+    tokenizer: PreTrainedTokenizerBase = load_tokenizer(MODEL_ID)  # type: ignore[assignment]
+    W_U: Float[Tensor, "vocab d_model"] = model.lm_head.weight.detach()  # type: ignore[attr-defined]
+
+    def render(basis: BasisDirection) -> widgets.Widget:
+        v = torch.as_tensor(basis["vector"], dtype=W_U.dtype, device=W_U.device)
+        direct_effects = (W_U @ v).float().cpu().numpy()
+
+        order = np.argsort(direct_effects)
+        bot_idx = order[:top_k]
+        top_idx = order[-top_k:][::-1]
+
+        def fmt_table(indices: np.ndarray, title: str) -> str:
+            rows = "".join(
+                f"<tr><td style='padding:0 0.5em'>{rank + 1}</td>"
+                f"<td style='font-family:monospace;padding:0 0.5em'>{_tok_str(tokenizer, int(idx))}</td>"
+                f"<td style='text-align:right;padding:0 0.5em'>{float(direct_effects[idx]):+.4f}</td></tr>"
+                for rank, idx in enumerate(indices)
+            )
+            return (
+                f"<div><h4 style='margin:0 0 0.25em 0'>{title}</h4>"
+                f"<table style='border-collapse:collapse;font-size:0.9em'>"
+                f"<thead><tr><th>#</th><th style='text-align:left'>token</th>"
+                f"<th style='text-align:right'>W_U·v</th></tr></thead>"
+                f"<tbody>{rows}</tbody></table></div>"
+            )
+
+        tables = widgets.HTML(
+            f"<div style='display:flex;gap:2em'>"
+            f"{fmt_table(top_idx, 'Top upweighted')}"
+            f"{fmt_table(bot_idx, 'Top downweighted')}"
+            f"</div>"
+        )
+
+        hist = widgets.Output()
+        with hist:
+            fig, ax = plt.subplots(figsize=(7, 3))
+            ax.hist(direct_effects, bins=80)
+            ax.axvline(0.0, color="gray", linewidth=0.6)
+            ax.set_xlabel("direct logit effect  (W_U · v)")
+            ax.set_ylabel("token count")
+            ax.set_title(f"distribution over vocab (|V|={len(direct_effects)})")
+            fig.tight_layout()
+            display(fig)
+            plt.close(fig)
+
+        return widgets.VBox([tables, hist])
+
+    return _basis_dropdown_with_container(basis_list, render)
+
+
 def example_cosine_widget(
     cache_path: Path,
     model: LanguageModel,
