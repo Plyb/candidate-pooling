@@ -340,6 +340,7 @@ dependencies = [
     { name = "nnsight" },
     { name = "notebook" },
     { name = "numpy" },
+    { name = "reacton" },
     { name = "scikit-learn" },
     { name = "torch" },
     { name = "umap-learn" },
@@ -358,10 +359,11 @@ requires-dist = [
     { name = "jaxtyping", specifier = "==0.3.3" },
     { name = "jupyterlab", specifier = "==4.5.6" },
     { name = "matplotlib", specifier = "==3.10.9" },
-    { name = "mirror-pipeline", editable = "../../MIRROR-Pipeline" },
+    { name = "mirror-pipeline", editable = "/home/kobyjl/MIRROR-Pipeline" },
     { name = "nnsight", specifier = "==0.7.0" },
     { name = "notebook", specifier = "==7.5.5" },
     { name = "numpy", specifier = "==2.4.4" },
+    { name = "reacton", specifier = ">=1.9.1" },
     { name = "scikit-learn", specifier = "==1.8.0" },
     { name = "torch", specifier = "==2.11.0+cu126", index = "https://download.pytorch.org/whl/cu126" },
     { name = "umap-learn", specifier = "==0.5.12" },
@@ -1748,7 +1750,7 @@ wheels = [
 [[package]]
 name = "mirror-pipeline"
 version = "0.1.0"
-source = { editable = "../../MIRROR-Pipeline" }
+source = { editable = "/home/kobyjl/MIRROR-Pipeline" }
 dependencies = [
     { name = "aiohttp" },
     { name = "datasets" },
@@ -3034,6 +3036,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c4/59/a5f38970f9bf07cee96128de79590bb354917914a9be11272cfc7ff26af0/pyzmq-27.1.0-cp314-cp314t-win32.whl", hash = "sha256:1f0b2a577fd770aa6f053211a55d1c47901f4d537389a034c690291485e5fe92", size = 587472, upload-time = "2025-09-08T23:08:58.18Z" },
     { url = "https://files.pythonhosted.org/packages/70/d8/78b1bad170f93fcf5e3536e70e8fadac55030002275c9a29e8f5719185de/pyzmq-27.1.0-cp314-cp314t-win_amd64.whl", hash = "sha256:19c9468ae0437f8074af379e986c5d3d7d7bfe033506af442e8c879732bedbe0", size = 661401, upload-time = "2025-09-08T23:08:59.802Z" },
     { url = "https://files.pythonhosted.org/packages/81/d6/4bfbb40c9a0b42fc53c7cf442f6385db70b40f74a783130c5d0a5aa62228/pyzmq-27.1.0-cp314-cp314t-win_arm64.whl", hash = "sha256:dc5dbf68a7857b59473f7df42650c621d7e8923fb03fa74a526890f4d33cc4d7", size = 575170, upload-time = "2025-09-08T23:09:01.418Z" },
+]
+
+[[package]]
+name = "reacton"
+version = "1.9.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "ipywidgets" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/31/61/f526e87c02f28749c700c3d198365f214c4f9bc76a2fddb6111dfa443816/reacton-1.9.1.tar.gz", hash = "sha256:035acb0dce9fb14c9604d5410d2f838cc5792046ed116266b8d56665c2fb638b", size = 100368, upload-time = "2025-02-10T10:52:57.117Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b4/08/d3bbf52900e64b5fc80ff4202b359b83562df9ea5261eeae73ffd444f7cf/reacton-1.9.1-py2.py3-none-any.whl", hash = "sha256:da2472ae97eaf980484210c41762ea7f2859efea943897b4465e0aa77022da91", size = 108785, upload-time = "2025-02-10T10:52:54.892Z" },
 ]
 
 [[package]]

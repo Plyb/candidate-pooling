@@ -1,17 +1,20 @@
 import html
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Mapping, cast
+from typing import Any, Hashable, Mapping, cast
 
 import ipywidgets as widgets
 import matplotlib.pyplot as plt
 import numpy as np
+import reacton
+import reacton.ipywidgets as rw
 import torch
 import torch.nn.functional as F
 from torch import Tensor
 from datasets import Dataset, load_from_disk
 from IPython.display import display
 from nnsight import LanguageModel
+from reacton.core import Element
 from transformers import PreTrainedTokenizerBase
 from jaxtyping import Float
 
@@ -46,20 +49,30 @@ def _load_mined(cache_path: Path) -> TypedDataset[Candidate]:
     return cast(TypedDataset[Candidate], _load(cache_path / "mined"))
 
 
-def _basis_dropdown_with_container(
+@reacton.component
+def _MatplotlibView(draw: Callable[[], None], redraw_key: Hashable) -> Element:
+    out_el = rw.Output()
+
+    def effect() -> None:
+        out_widget = cast(widgets.Output, reacton.get_widget(out_el))
+        out_widget.clear_output(wait=True)
+        with out_widget:
+            draw()
+
+    reacton.use_effect(effect, [redraw_key])
+    return out_el
+
+@reacton.component
+def _BasisDropdown(
     basis_dir_list: list[BasisDirection],
-    render: Callable[[BasisDirection], widgets.Widget],
-) -> widgets.Widget:
+    render: Callable[[BasisDirection], Element],
+) -> Element:
+    idx, set_idx = reacton.use_state(0)
     options = [(f"Direction {b['cluster_id']} (ex {b['example_id']})", i) for i, b in enumerate(basis_dir_list)]
-    dropdown = widgets.Dropdown(options=options, description="Basis:")
-    container = widgets.VBox([])
-
-    def show(idx: int) -> None:
-        container.children = (render(basis_dir_list[idx]),)
-
-    dropdown.observe(lambda change: show(int(change["new"])), names="value")
-    show(int(dropdown.value))  # type: ignore[arg-type]
-    return widgets.VBox([dropdown, container])
+    with rw.VBox() as main: # TODO: not sure I love this `with` syntax. Can we do this more functionally?
+        rw.Dropdown(options=options, value=idx, on_value=set_idx, description="Basis:")
+        render(basis_dir_list[idx])
+    return main
 
 
 def _decode_token(tokenizer: PreTrainedTokenizerBase, token_id: int) -> str:
@@ -73,11 +86,11 @@ def _visualize_invisibles(token: str) -> str:
 
 _TOKEN_STYLE = "<style>.tok:hover { outline: 1px solid #000; }</style>"
 
-def _tok_str(tokenizer: PreTrainedTokenizerBase, tok_id: int) -> str: 
+def _tok_str(tokenizer: PreTrainedTokenizerBase, tok_id: int) -> str:
     return html.escape(_visualize_invisibles(_decode_token(tokenizer, tok_id)))
 
 
-def source_example_widget(cache_path: Path) -> widgets.Widget:
+def source_example_widget(cache_path: Path) -> Element:
     basis_list = _load_basis(cache_path)
     train_by_id = {row["example_id"]: row for row in _load_tok_train(cache_path)}
     mined_by_id: dict[int, list[Candidate]] = {}
@@ -92,7 +105,7 @@ def source_example_widget(cache_path: Path) -> widgets.Widget:
                 return int(cand["token_pos"])
         raise ValueError(f"no mined candidate matched basis for example {basis['example_id']}")
 
-    def render(basis: BasisDirection) -> widgets.Widget:
+    def render(basis: BasisDirection) -> Element:
         ex = train_by_id[basis["example_id"]]
         token_pos = find_token_pos(basis)
         spans = []
@@ -101,16 +114,16 @@ def source_example_widget(cache_path: Path) -> widgets.Widget:
             style = "background:#ffeb3b;font-weight:bold" if i == token_pos else ""
             spans.append(f"<span class='tok' style='{style}'>{tok}</span>")
         answer = _tok_str(tokenizer, int(ex["label_id"]))
-        return widgets.HTML(
+        return rw.HTML(value=(
             f"{_TOKEN_STYLE}"
             f"<pre style='white-space:pre-wrap;font-family:monospace'>{''.join(spans)}</pre>"
             f"<p><b>Correct answer:</b> {answer}</p>"
-        )
+        ))
 
-    return _basis_dropdown_with_container(basis_list, render)
+    return _BasisDropdown(basis_list, render)
 
 
-def top_probe_examples_widget(cache_path: Path, k: int = 10) -> widgets.Widget:
+def top_probe_examples_widget(cache_path: Path, k: int = 10) -> Element:
     basis_list = _load_basis(cache_path)
     probe_list = list(_load_tok_probe(cache_path))
     tokenizer: PreTrainedTokenizerBase = load_tokenizer(MODEL_ID)  # type: ignore[assignment]
@@ -122,7 +135,7 @@ def top_probe_examples_widget(cache_path: Path, k: int = 10) -> widgets.Widget:
         arr = np.asarray(fingerprint, dtype=np.float32)
         return [arr[bounds[i] : bounds[i + 1]] for i in range(len(probe_list))]
 
-    def render(basis: BasisDirection) -> widgets.Widget:
+    def render(basis: BasisDirection) -> Element:
         loss_deltas_per_example = split_by_example(basis["loss_fingerprint"])
         min_delta = np.array([float(p.min()) for p in loss_deltas_per_example])
         bottom_idx = np.argsort(min_delta)[:k]
@@ -151,12 +164,12 @@ def top_probe_examples_widget(cache_path: Path, k: int = 10) -> widgets.Widget:
                 f"<pre style='white-space:pre-wrap;font-family:monospace;margin:0.25em 0'>"
                 f"{''.join(spans)}</pre></div>"
             )
-        return widgets.HTML(_TOKEN_STYLE + "<hr/>".join(parts))
+        return rw.HTML(value=_TOKEN_STYLE + "<hr/>".join(parts))
 
-    return _basis_dropdown_with_container(basis_list, render)
+    return _BasisDropdown(basis_list, render)
 
 
-def fingerprint_histograms_widget(cache_path: Path) -> widgets.Widget:
+def fingerprint_histograms_widget(cache_path: Path) -> Element:
     basis_list = _load_basis(cache_path)
     probe_list = _load_tok_probe(cache_path)
     tokenizer: PreTrainedTokenizerBase = load_tokenizer(MODEL_ID)  # type: ignore[assignment]
@@ -168,9 +181,8 @@ def fingerprint_histograms_widget(cache_path: Path) -> widgets.Widget:
     answer_arr = np.asarray(per_token_answer)
     answer_labels = sorted(set(per_token_answer))
 
-    def render(basis: BasisDirection) -> widgets.Widget:
-        out = widgets.Output()
-        with out:
+    def render(basis: BasisDirection) -> Element:
+        def draw() -> None:
             fig, axs = plt.subplots(1, 2, figsize=(10, 4))
             for ax, key, label in [
                 (axs[0], "loss_fingerprint", "Δloss"),
@@ -191,9 +203,10 @@ def fingerprint_histograms_widget(cache_path: Path) -> widgets.Widget:
             fig.tight_layout()
             display(fig)
             plt.close(fig)
-        return out
 
-    return _basis_dropdown_with_container(basis_list, render)
+        return _MatplotlibView(draw=draw, redraw_key=basis["cluster_id"])
+
+    return _BasisDropdown(basis_list, render)
 
 
 def _render_token_spans(
@@ -215,73 +228,57 @@ def _render_token_spans(
         )
     return "".join(spans)
 
-# TODO: consider Reacton
-
-# TODO: unify this with _basis_dropdown_with_container
-def _make_example_selector_widget( # TODO: is there a way to factor out the list-of-dropdowns aspect of this? might need to do some overloads to get the different arities
+# TODO unify with _BasisDropdown
+# TODO: is there a way to factor out the list-of-dropdowns aspect of this? might need to do some overloads to get the different arities
+@reacton.component
+def _ExampleSelector(
     example_splits: Mapping[str, list[TokenizedExample]],
     tokenizer: PreTrainedTokenizerBase,
     basis_list: list[BasisDirection] | None,
     compute: Callable[[TokenizedExample, BasisDirection | None], np.ndarray],
     hover_label: str,
-) -> widgets.Widget:
-    split_dd = widgets.Dropdown(options=example_splits.keys(), value=next(iter(example_splits.keys())), description="Split:")
+) -> Element:
+    split_keys = list(example_splits.keys())
+    split, set_split = reacton.use_state(split_keys[0])
+    example_idx, set_example_idx = reacton.use_state(0)
+    basis_idx, set_basis_idx = reacton.use_state(0)
 
-    def current_list() -> list[TokenizedExample]:
-        return example_splits[cast(str, split_dd.value)]
+    current_list = example_splits[split]
+    example_idx = min(example_idx, len(current_list) - 1)
+    ex = current_list[example_idx]
+    basis = basis_list[basis_idx] if basis_list is not None else None
 
-    def example_options() -> list[tuple[str, int]]:
-        return [(f"{i}: example {ex['example_id']}", i) for i, ex in enumerate(current_list())]
+    def on_split(new_split: str) -> None:
+        set_split(new_split)
+        set_example_idx(0)
 
-    example_dd: widgets.Dropdown = widgets.Dropdown(
-        description="Example:", options=example_options(), value=0,
+    values = compute(ex, basis)
+    answer = _tok_str(tokenizer, int(ex["label_id"]))
+    content_html = (
+        f"{_TOKEN_STYLE}"
+        f"<p>example {ex['example_id']} &middot; correct: <b>{answer}</b></p>"
+        f"<pre style='white-space:pre-wrap;font-family:monospace'>"
+        f"{_render_token_spans(ex, values, tokenizer, hover_label)}</pre>"
     )
-    selectors: list[widgets.Widget] = [split_dd, example_dd]
-    basis_dd: widgets.Dropdown | None = None
-    if basis_list is not None:
-        basis_dd = widgets.Dropdown(
-            options=[(f"cluster {b['cluster_id']} (ex {b['example_id']})", i) for i, b in enumerate(basis_list)],
-            value=0,
-            description="Basis:",
-        )
-        selectors.append(basis_dd)
-    output = widgets.VBox([])
 
-    def update(*_: Any) -> None:
-        if example_dd.value is None:
-            return
-        if basis_dd is not None and basis_dd.value is None:
-            return
-        ex_idx = int(example_dd.value)  # type: ignore[arg-type]
-        ex = current_list()[ex_idx]
-        basis = (
-            basis_list[int(basis_dd.value)]  # type: ignore[arg-type]
-            if basis_list is not None and basis_dd is not None
-            else None
-        )
-        values = compute(ex, basis)
-        answer = _tok_str(tokenizer, int(ex["label_id"]))
-        output.children = (widgets.HTML(
-            f"{_TOKEN_STYLE}"
-            f"<p>example {ex['example_id']} &middot; correct: <b>{answer}</b></p>"
-            f"<pre style='white-space:pre-wrap;font-family:monospace'>"
-            f"{_render_token_spans(ex, values, tokenizer, hover_label)}</pre>"
-        ),)
-
-    def on_split_change(_: Any) -> None:
-        example_dd.unobserve(update, names="value")
-        example_dd.options = example_options()
-        example_dd.value = 0
-        example_dd.observe(update, names="value")
-        update()
-
-    split_dd.observe(on_split_change, names="value")
-    example_dd.observe(update, names="value")
-    if basis_dd is not None:
-        basis_dd.observe(update, names="value")
-    update()
-
-    return widgets.VBox([widgets.HBox(selectors), output])
+    with rw.VBox() as main:
+        with rw.HBox():
+            rw.Dropdown(options=split_keys, value=split, on_value=on_split, description="Split:")
+            rw.Dropdown(
+                options=[(f"{i}: example {e['example_id']}", i) for i, e in enumerate(current_list)],
+                value=example_idx,
+                on_value=set_example_idx,
+                description="Example:",
+            )
+            if basis_list is not None:
+                rw.Dropdown(
+                    options=[(f"cluster {b['cluster_id']} (ex {b['example_id']})", i) for i, b in enumerate(basis_list)],
+                    value=basis_idx,
+                    on_value=set_basis_idx,
+                    description="Basis:",
+                )
+        rw.HTML(value=content_html)
+    return main
 
 
 def example_fingerprint_widget(
@@ -289,7 +286,7 @@ def example_fingerprint_widget(
     model: LanguageModel,
     layer: int = LAYER,
     example_splits: Mapping[str, list[TokenizedExample]] | None = None,
-) -> widgets.Widget:
+) -> Element:
     basis_list = _load_basis(cache_path)
     example_splits = example_splits or {
         "train": list(_load_tok_train(cache_path)),
@@ -303,7 +300,7 @@ def example_fingerprint_widget(
         v = torch.as_tensor(basis["vector"], dtype=jac_loss.dtype, device=jac_loss.device)
         return (jac_loss @ v).detach().float().cpu().numpy()
 
-    return _make_example_selector_widget(example_splits, tokenizer, basis_list, compute, "J·v")
+    return _ExampleSelector(example_splits, tokenizer, basis_list, compute, "J·v")
 
 
 def example_activation_dot_widget(
@@ -312,7 +309,7 @@ def example_activation_dot_widget(
     layer: int = LAYER,
     example_splits: Mapping[str, list[TokenizedExample]] | None = None,
     exclude_bos: bool = False,
-) -> widgets.Widget:
+) -> Element:
     basis_list = _load_basis(cache_path)
     example_splits = example_splits or {
         "train": list(_load_tok_train(cache_path)),
@@ -330,7 +327,7 @@ def example_activation_dot_widget(
         v = torch.as_tensor(basis["vector"], dtype=h.dtype, device=h.device)
         return (h @ v).detach().float().cpu().numpy()
 
-    return _make_example_selector_widget(example_splits, tokenizer, basis_list, compute, "h·v")
+    return _ExampleSelector(example_splits, tokenizer, basis_list, compute, "h·v")
 
 
 def example_fingerprint_widget_steered(
@@ -339,7 +336,7 @@ def example_fingerprint_widget_steered(
     layer: int = LAYER,
     alpha: float = ALPHA_DEFAULT,
     example_splits: Mapping[str, list[TokenizedExample]] | None = None,
-) -> widgets.Widget:
+) -> Element:
     """For each token t: steer the layer-`layer` activation by `alpha * v`
     and render the resulting Δloss on the final token. Tests whether the per-token Jacobian
     score is self-consistent under actual steering at that magnitude."""
@@ -366,7 +363,128 @@ def example_fingerprint_widget_steered(
             deltas[t] = loss_t - baseline_loss
         return deltas.detach().float().cpu().numpy()
 
-    return _make_example_selector_widget(example_splits, tokenizer, basis_list, compute, "Δloss(steered)")
+    return _ExampleSelector(example_splits, tokenizer, basis_list, compute, "Δloss(steered)")
+
+
+_JacCacheEntry = tuple[Float[Tensor, "seq d_model"], Float[Tensor, "seq d_model"], TokenizedExample]
+
+
+@reacton.component
+def _SteeringCurve(
+    basis_list: list[BasisDirection],
+    splits: Mapping[str, list[TokenizedExample]],
+    tokenizer: PreTrainedTokenizerBase,
+    model: LanguageModel,
+    layer: int,
+    alpha_max_default: float,
+    n_alphas_default: int,
+) -> Element:
+    split_keys = list(splits.keys())
+    split, set_split = reacton.use_state(split_keys[0])
+    basis_idx, set_basis_idx = reacton.use_state(0)
+    example_idx, set_example_idx = reacton.use_state(0)
+    token_idx, set_token_idx = reacton.use_state(0)
+    alpha_max, set_alpha_max = reacton.use_state(alpha_max_default)
+    n_alphas, set_n_alphas = reacton.use_state(n_alphas_default)
+    log_alpha, set_log_alpha = reacton.use_state(False)
+
+    jac_cache_ref = reacton.use_ref(cast(dict[tuple[str, int], _JacCacheEntry], {}))
+    baseline_fn = reacton.use_memo(lambda: make_baseline_fn(model), [id(model)])
+
+    current_list = splits[split]
+    example_idx = min(example_idx, len(current_list) - 1)
+    tokenized_preview = current_list[example_idx]
+    token_idx = min(token_idx, int(tokenized_preview["input_ids"].shape[0]) - 1)
+
+    def on_split(new_split: str) -> None:
+        set_split(new_split)
+        set_example_idx(0)
+        set_token_idx(0)
+
+    def on_example(new_idx: int) -> None:
+        set_example_idx(int(new_idx))
+        set_token_idx(0)
+
+    key = (split, example_idx)
+    cache = jac_cache_ref.current
+    if key not in cache:
+        tokenized = current_list[example_idx]
+        jac_loss, _ = compute_jacobians(model, tokenized, layer)
+        baseline_loss = baseline_fn(tokenized)["loss"].cuda().detach()
+        cache[key] = (jac_loss.detach(), baseline_loss, tokenized)
+    jac_loss, baseline_loss, tokenized = cache[key]
+
+    basis = basis_list[basis_idx]
+    v = torch.as_tensor(basis["vector"], dtype=jac_loss.dtype, device=jac_loss.device)
+    score = float(jac_loss[token_idx] @ v)
+    baseline_scalar = float(baseline_loss)
+
+    if log_alpha:
+        n_side = max((n_alphas - 1) // 2, 1)
+        small = max(alpha_max * 1e-4, 1e-8)
+        side = np.logspace(np.log10(small), np.log10(max(alpha_max, small * 10)), n_side)
+        alphas = np.sort(np.concatenate([-side, [0.0], side]))
+    else:
+        alphas = np.linspace(-alpha_max, alpha_max, max(n_alphas, 3))
+
+    losses = np.empty_like(alphas)
+    for i, a in enumerate(alphas):
+        if a == 0.0:
+            losses[i] = baseline_scalar
+            continue
+        perturbation = float(a) * v
+        with torch.no_grad(), model.trace(to_transformer_input(tokenized)):
+            model.model.layers[layer].output[0, token_idx] += perturbation  # type: ignore[attr-defined]
+            logits = model.output.logits.save()  # type: ignore[attr-defined]
+        loss_t, _entropy = _final_token_loss_entropy(logits[0], tokenized["label_id"])
+        losses[i] = float(loss_t)
+
+    tok_label = _visualize_invisibles(_decode_token(tokenizer, int(tokenized["input_ids"][token_idx].item())))
+
+    def draw() -> None:
+        fig, ax = plt.subplots(figsize=(7, 4))
+        ax.axhline(baseline_scalar, color="gray", linestyle=":", linewidth=0.8, label="baseline")
+        ax.plot(alphas, baseline_scalar + alphas * score, "--", color="C1", label=f"linear (J·v={score:+.3g})")
+        ax.plot(alphas, losses, "o-", color="C0", markersize=4, label="actual")
+        ax.set_xlabel("α  (perturbation = α · v)")
+        ax.set_ylabel("final-token loss")
+        ax.set_title(f"example {tokenized['example_id']} · token {token_idx}: {tok_label!r}")
+        if log_alpha:
+            linthresh = max(alpha_max * 1e-4, 1e-8)
+            ax.set_xscale("symlog", linthresh=linthresh)
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+        display(fig)
+        plt.close(fig)
+
+    redraw_key = (split, basis_idx, example_idx, token_idx, alpha_max, n_alphas, log_alpha)
+
+    with rw.VBox() as main:
+        with rw.HBox():
+            rw.Dropdown(options=split_keys, value=split, on_value=on_split, description="Split:")
+            rw.Dropdown(
+                options=[(f"cluster {b['cluster_id']} (ex {b['example_id']})", i) for i, b in enumerate(basis_list)],
+                value=basis_idx, on_value=set_basis_idx, description="Basis:",
+            )
+            rw.Dropdown(
+                options=[(f"{i}: example {e['example_id']}", i) for i, e in enumerate(current_list)],
+                value=example_idx, on_value=on_example, description="Example:",
+            )
+            rw.Dropdown(
+                options=[
+                    (f"{i}: {_visualize_invisibles(_decode_token(tokenizer, int(tok_id)))!r}", i)
+                    for i, tok_id in enumerate(tokenized["input_ids"])
+                ],
+                value=token_idx, on_value=set_token_idx, description="Token:",
+            )
+        with rw.HBox():
+            rw.FloatText(value=alpha_max, on_value=set_alpha_max, description="α max:",
+                         layout={"width": "180px"})
+            rw.IntText(value=n_alphas, on_value=set_n_alphas, description="n α:",
+                       layout={"width": "160px"})
+            rw.Checkbox(value=log_alpha, on_value=set_log_alpha, description="log α", indent=False)
+        _MatplotlibView(draw=draw, redraw_key=redraw_key)
+    return main
 
 
 def example_steering_curve_widget(
@@ -375,157 +493,38 @@ def example_steering_curve_widget(
     layer: int = LAYER,
     alpha_max: float = 1.0,
     n_alphas: int = 21,
-) -> widgets.Widget: # TODO: this could use a similar dropdown widget, but further abstracted so that its content can be anything
+) -> Element:
     """Pick a (split, example, basis, token) and sweep α: plot final-token loss vs α
     when the layer-`layer` activation at the chosen token is perturbed by α·v. Overlays
     the linear prediction baseline + α·(J_loss[t]·v) for direct comparison."""
     basis_list = _load_basis(cache_path)
-    train_list = list(_load_tok_train(cache_path))
-    probe_list = list(_load_tok_probe(cache_path))
+    splits: Mapping[str, list[TokenizedExample]] = {
+        "probe": list(_load_tok_probe(cache_path)),
+        "train": list(_load_tok_train(cache_path)),
+    }
     tokenizer: PreTrainedTokenizerBase = load_tokenizer(MODEL_ID)  # type: ignore[assignment]
-    baseline_fn = make_baseline_fn(model)
 
-    split_dd = widgets.Dropdown(options=["probe", "train"], value="probe", description="Split:")
-    basis_dd = widgets.Dropdown(
-        description="Basis:",
-        options=[(f"cluster {b['cluster_id']} (ex {b['example_id']})", i) for i, b in enumerate(basis_list)],
-        value=0,
+    return _SteeringCurve(
+        basis_list=basis_list,
+        splits=splits,
+        tokenizer=tokenizer,
+        model=model,
+        layer=layer,
+        alpha_max_default=alpha_max,
+        n_alphas_default=n_alphas,
     )
-    example_dd: widgets.Dropdown = widgets.Dropdown(description="Example:")
-    token_dd: widgets.Dropdown = widgets.Dropdown(description="Token:")
-    alpha_max_box = widgets.FloatText(value=alpha_max, description="α max:", layout=widgets.Layout(width="180px"))
-    n_alphas_box = widgets.IntText(value=n_alphas, description="n α:", layout=widgets.Layout(width="160px"))
-    log_toggle = widgets.Checkbox(value=False, description="log α", indent=False)
-    output = widgets.Output()
-
-    def current_list() -> list[TokenizedExample]:
-        return probe_list if split_dd.value == "probe" else train_list
-
-    def example_options() -> list[tuple[str, int]]:
-        return [(f"{i}: example {ex['example_id']}", i) for i, ex in enumerate(current_list())]
-
-    def token_options(ex: TokenizedExample) -> list[tuple[str, int]]:
-        return [
-            (f"{i}: {_visualize_invisibles(_decode_token(tokenizer, int(tok_id)))!r}", i)
-            for i, tok_id in enumerate(ex["input_ids"])
-        ]
-
-    jac_cache: dict[
-        tuple[str, int],
-        tuple[Float[Tensor, "seq d_model"], Float[Tensor, "seq d_model"], TokenizedExample]
-    ] = {}
-
-    def get_cached(split: str, ex_idx: int) -> tuple[Float[Tensor, "seq d_model"], Float[Tensor, "seq d_model"], TokenizedExample]:
-        key = (split, ex_idx)
-        if key not in jac_cache:
-            tokenized = current_list()[ex_idx]
-            jac_loss, _ = compute_jacobians(model, tokenized, layer)
-            baseline_loss = baseline_fn(tokenized)["loss"].cuda().detach()
-            jac_cache[key] = (jac_loss.detach(), baseline_loss, tokenized)
-        return jac_cache[key]
-
-    def alpha_array() -> np.ndarray:
-        amax = float(alpha_max_box.value)
-        n = max(int(n_alphas_box.value), 3)
-        if log_toggle.value:
-            n_side = max((n - 1) // 2, 1)
-            small = max(amax * 1e-4, 1e-8)
-            side = np.logspace(np.log10(small), np.log10(max(amax, small * 10)), n_side)
-            return np.sort(np.concatenate([-side, [0.0], side]))
-        return np.linspace(-amax, amax, n)
-
-    def update(*_: Any) -> None:
-        if example_dd.value is None or token_dd.value is None or basis_dd.value is None:
-            return
-        ex_idx = int(example_dd.value)  # type: ignore[arg-type]
-        t = int(token_dd.value)  # type: ignore[arg-type]
-        basis = basis_list[int(basis_dd.value)]  # type: ignore[arg-type]
-
-        jac_loss, baseline_loss, tokenized = get_cached(str(split_dd.value), ex_idx)
-        v = torch.as_tensor(basis["vector"], dtype=jac_loss.dtype, device=jac_loss.device)
-        score = float(jac_loss[t] @ v)
-        baseline_scalar = float(baseline_loss)
-
-        alphas = alpha_array()
-        losses = np.empty_like(alphas)
-        for i, a in enumerate(alphas):
-            if a == 0.0:
-                losses[i] = baseline_scalar
-                continue
-            perturbation = float(a) * v
-            with torch.no_grad(), model.trace(to_transformer_input(tokenized)):
-                model.model.layers[layer].output[0, t] += perturbation  # type: ignore[attr-defined]
-                logits = model.output.logits.save()  # type: ignore[attr-defined] #TODO factor out perturbed logit computation
-            loss_t, _entropy = _final_token_loss_entropy(logits[0], tokenized["label_id"])
-            losses[i] = float(loss_t)
-
-        output.clear_output(wait=True)
-        with output:
-            fig, ax = plt.subplots(figsize=(7, 4))
-            ax.axhline(baseline_scalar, color="gray", linestyle=":", linewidth=0.8, label="baseline")
-            ax.plot(alphas, baseline_scalar + alphas * score, "--", color="C1", label=f"linear (J·v={score:+.3g})")
-            ax.plot(alphas, losses, "o-", color="C0", markersize=4, label="actual")
-            tok = _visualize_invisibles(_decode_token(tokenizer, int(tokenized["input_ids"][t].item())))
-            ax.set_xlabel("α  (perturbation = α · v)")
-            ax.set_ylabel("final-token loss")
-            ax.set_title(f"example {tokenized['example_id']} · token {t}: {tok!r}")
-            if log_toggle.value:
-                linthresh = max(float(alpha_max_box.value) * 1e-4, 1e-8)
-                ax.set_xscale("symlog", linthresh=linthresh)
-            ax.legend(fontsize=8)
-            fig.tight_layout()
-            display(fig)
-            plt.close(fig)
-
-    def repopulate_tokens(*_: Any) -> None:
-        if example_dd.value is None:
-            return
-        ex = current_list()[int(example_dd.value)]  # type: ignore[arg-type]
-        token_dd.unobserve(update, names="value")
-        token_dd.options = token_options(ex)
-        token_dd.value = 0
-        token_dd.observe(update, names="value")
-        update()
-
-    def on_split_change(*_: Any) -> None:
-        example_dd.unobserve(repopulate_tokens, names="value")
-        example_dd.options = example_options()
-        example_dd.value = 0
-        example_dd.observe(repopulate_tokens, names="value")
-        repopulate_tokens()
-
-    example_dd.options = example_options()
-    example_dd.value = 0
-    token_dd.options = token_options(current_list()[0])
-    token_dd.value = 0
-
-    split_dd.observe(on_split_change, names="value")
-    example_dd.observe(repopulate_tokens, names="value")
-    token_dd.observe(update, names="value")
-    basis_dd.observe(update, names="value")
-    alpha_max_box.observe(update, names="value")
-    n_alphas_box.observe(update, names="value")
-    log_toggle.observe(update, names="value")
-
-    update()
-
-    return widgets.VBox([
-        widgets.HBox([split_dd, basis_dd, example_dd, token_dd]),
-        widgets.HBox([alpha_max_box, n_alphas_box, log_toggle]),
-        output,
-    ])
 
 
 def logit_lens_widget(
     cache_path: Path,
     model: LanguageModel,
     top_k: int = 20,
-) -> widgets.Widget:
+) -> Element:
     basis_list = _load_basis(cache_path)
     tokenizer: PreTrainedTokenizerBase = load_tokenizer(MODEL_ID)  # type: ignore[assignment]
     W_U: Float[Tensor, "vocab d_model"] = model.lm_head.weight.detach()  # type: ignore[attr-defined]
 
-    def render(basis: BasisDirection) -> widgets.Widget:
+    def render(basis: BasisDirection) -> Element:
         v = torch.as_tensor(basis["vector"], dtype=W_U.dtype, device=W_U.device)
         direct_effects = (W_U @ v).float().cpu().numpy()
 
@@ -548,15 +547,14 @@ def logit_lens_widget(
                 f"<tbody>{rows}</tbody></table></div>"
             )
 
-        tables = widgets.HTML(
+        tables_html = (
             f"<div style='display:flex;gap:2em'>"
             f"{fmt_table(top_idx, 'Top upweighted')}"
             f"{fmt_table(bot_idx, 'Top downweighted')}"
             f"</div>"
         )
 
-        hist = widgets.Output()
-        with hist:
+        def draw() -> None:
             fig, ax = plt.subplots(figsize=(7, 3))
             ax.hist(direct_effects, bins=80)
             ax.axvline(0.0, color="gray", linewidth=0.6)
@@ -567,16 +565,19 @@ def logit_lens_widget(
             display(fig)
             plt.close(fig)
 
-        return widgets.VBox([tables, hist])
+        with rw.VBox() as box:
+            rw.HTML(value=tables_html)
+            _MatplotlibView(draw=draw, redraw_key=basis["cluster_id"])
+        return box
 
-    return _basis_dropdown_with_container(basis_list, render)
+    return _BasisDropdown(basis_list, render)
 
 
 def example_cosine_widget(
     cache_path: Path,
     model: LanguageModel,
     layer: int = LAYER,
-) -> widgets.Widget:
+) -> Element:
     basis_list = _load_basis(cache_path)
     example_splits = {
         "train": list(_load_tok_train(cache_path)),
@@ -591,14 +592,14 @@ def example_cosine_widget(
         cos = F.cosine_similarity(neg_grad, v.unsqueeze(0), dim=-1)
         return cos.detach().float().cpu().numpy()
 
-    return _make_example_selector_widget(example_splits, tokenizer, basis_list, compute, "cos")
+    return _ExampleSelector(example_splits, tokenizer, basis_list, compute, "cos")
 
 
 def example_gradient_norm_widget(
     cache_path: Path,
     model: LanguageModel,
     layer: int = LAYER,
-) -> widgets.Widget:
+) -> Element:
     example_splits = {
         "train": list(_load_tok_train(cache_path)),
         "probe": list(_load_tok_probe(cache_path))
@@ -609,4 +610,4 @@ def example_gradient_norm_widget(
         neg_grad = compute_neg_gradients(model, example, layer)
         return neg_grad.norm(dim=-1).detach().float().cpu().numpy()
 
-    return _make_example_selector_widget(example_splits, tokenizer, None, compute, "‖∇‖")
+    return _ExampleSelector(example_splits, tokenizer, None, compute, "‖∇‖")
