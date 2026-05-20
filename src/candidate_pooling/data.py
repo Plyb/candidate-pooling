@@ -9,7 +9,7 @@ from byutils import load_dataset
 
 from candidate_pooling.lib.dataset_utils import set_format
 from candidate_pooling.lib.typed_dataset import TypedDataset, TypedIterableDataset
-from candidate_pooling.model import make_tokenize_fn
+from candidate_pooling.model import DefaultPromptFormatter, PromptFormatter, make_tokenize_fn
 from candidate_pooling.types import McqaExample, MmluExample, TokenizedExample, to_transformer_input
 
 logger = logging.getLogger(__name__)
@@ -48,8 +48,9 @@ def tokenize_dataset(
     dataset: TypedIterableDataset[McqaExample],
     n_train: int,
     n_probe: int,
+    prompt_formatter: PromptFormatter = DefaultPromptFormatter()
 ) -> tuple[TypedDataset[TokenizedExample], TypedDataset[TokenizedExample]]:
-    tokenize = make_tokenize_fn(model)
+    tokenize = make_tokenize_fn(model, prompt_formatter)
 
     def filter_fn(item: TokenizedExample) -> bool:
         with torch.no_grad(), model.trace(to_transformer_input(item)):

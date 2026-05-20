@@ -1,7 +1,7 @@
 import html
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Mapping, cast
 
 import ipywidgets as widgets
 import matplotlib.pyplot as plt
@@ -219,17 +219,16 @@ def _render_token_spans(
 
 # TODO: unify this with _basis_dropdown_with_container
 def _make_example_selector_widget( # TODO: is there a way to factor out the list-of-dropdowns aspect of this? might need to do some overloads to get the different arities
-    train_list: list[TokenizedExample],
-    probe_list: list[TokenizedExample],
+    example_splits: Mapping[str, list[TokenizedExample]],
     tokenizer: PreTrainedTokenizerBase,
     basis_list: list[BasisDirection] | None,
-    compute: Callable[[str, int, BasisDirection | None], np.ndarray],
+    compute: Callable[[TokenizedExample, BasisDirection | None], np.ndarray],
     hover_label: str,
 ) -> widgets.Widget:
-    split_dd = widgets.Dropdown(options=["probe", "train"], value="probe", description="Split:")
+    split_dd = widgets.Dropdown(options=example_splits.keys(), value=next(iter(example_splits.keys())), description="Split:")
 
     def current_list() -> list[TokenizedExample]:
-        return probe_list if split_dd.value == "probe" else train_list
+        return example_splits[cast(str, split_dd.value)]
 
     def example_options() -> list[tuple[str, int]]:
         return [(f"{i}: example {ex['example_id']}", i) for i, ex in enumerate(current_list())]
@@ -260,7 +259,7 @@ def _make_example_selector_widget( # TODO: is there a way to factor out the list
             if basis_list is not None and basis_dd is not None
             else None
         )
-        values = compute(str(split_dd.value), ex_idx, basis)
+        values = compute(ex, basis)
         answer = _tok_str(tokenizer, int(ex["label_id"]))
         output.children = (widgets.HTML(
             f"{_TOKEN_STYLE}"
@@ -289,20 +288,49 @@ def example_fingerprint_widget(
     cache_path: Path,
     model: LanguageModel,
     layer: int = LAYER,
+    example_splits: Mapping[str, list[TokenizedExample]] | None = None,
 ) -> widgets.Widget:
     basis_list = _load_basis(cache_path)
-    train_list = list(_load_tok_train(cache_path))
-    probe_list = list(_load_tok_probe(cache_path))
+    example_splits = example_splits or {
+        "train": list(_load_tok_train(cache_path)),
+        "probe": list(_load_tok_probe(cache_path))
+    }
     tokenizer: PreTrainedTokenizerBase = load_tokenizer(MODEL_ID)  # type: ignore[assignment]
 
-    def compute(split: str, ex_idx: int, basis: BasisDirection | None) -> np.ndarray:
+    def compute(example: TokenizedExample, basis: BasisDirection | None) -> np.ndarray:
         assert basis is not None
-        tokenized = (probe_list if split == "probe" else train_list)[ex_idx]
-        jac_loss, _ = compute_jacobians(model, tokenized, layer)
+        jac_loss, _ = compute_jacobians(model, example, layer)
         v = torch.as_tensor(basis["vector"], dtype=jac_loss.dtype, device=jac_loss.device)
         return (jac_loss @ v).detach().float().cpu().numpy()
 
-    return _make_example_selector_widget(train_list, probe_list, tokenizer, basis_list, compute, "J·v")
+    return _make_example_selector_widget(example_splits, tokenizer, basis_list, compute, "J·v")
+
+
+def example_activation_dot_widget(
+    cache_path: Path,
+    model: LanguageModel,
+    layer: int = LAYER,
+    example_splits: Mapping[str, list[TokenizedExample]] | None = None,
+    exclude_bos: bool = False,
+) -> widgets.Widget:
+    basis_list = _load_basis(cache_path)
+    example_splits = example_splits or {
+        "train": list(_load_tok_train(cache_path)),
+        "probe": list(_load_tok_probe(cache_path))
+    }
+    tokenizer: PreTrainedTokenizerBase = load_tokenizer(MODEL_ID)  # type: ignore[assignment]
+
+    def compute(example: TokenizedExample, basis: BasisDirection | None) -> np.ndarray:
+        assert basis is not None
+        with torch.no_grad(), model.trace(to_transformer_input(example)):
+            hidden = model.model.layers[layer].output[0].save()  # type: ignore[attr-defined]
+        h: Float[Tensor, "seq d_model"] = hidden
+        if exclude_bos:
+            h[0, :] = 0.0
+        v = torch.as_tensor(basis["vector"], dtype=h.dtype, device=h.device)
+        return (h @ v).detach().float().cpu().numpy()
+
+    return _make_example_selector_widget(example_splits, tokenizer, basis_list, compute, "h·v")
 
 
 def example_fingerprint_widget_steered(
@@ -310,33 +338,35 @@ def example_fingerprint_widget_steered(
     model: LanguageModel,
     layer: int = LAYER,
     alpha: float = ALPHA_DEFAULT,
+    example_splits: Mapping[str, list[TokenizedExample]] | None = None,
 ) -> widgets.Widget:
     """For each token t: steer the layer-`layer` activation by `alpha * v`
     and render the resulting Δloss on the final token. Tests whether the per-token Jacobian
     score is self-consistent under actual steering at that magnitude."""
     basis_list = _load_basis(cache_path)
-    train_list = list(_load_tok_train(cache_path))
-    probe_list = list(_load_tok_probe(cache_path))
+    example_splits = example_splits or {
+        "train": list(_load_tok_train(cache_path)),
+        "probe": list(_load_tok_probe(cache_path))
+    }
     tokenizer: PreTrainedTokenizerBase = load_tokenizer(MODEL_ID)  # type: ignore[assignment]
     baseline_fn = make_baseline_fn(model)
 
-    def compute(split: str, ex_idx: int, basis: BasisDirection | None) -> np.ndarray:
+    def compute(example: TokenizedExample, basis: BasisDirection | None) -> np.ndarray:
         assert basis is not None
-        tokenized = (probe_list if split == "probe" else train_list)[ex_idx]
         v = torch.as_tensor(basis["vector"], device="cuda")
-        baseline_loss = baseline_fn(tokenized)["loss"].cuda()
-        seq = int(tokenized["input_ids"].shape[0])
+        baseline_loss = baseline_fn(example)["loss"].cuda()
+        seq = int(example["input_ids"].shape[0])
         deltas = torch.empty(seq, device="cuda")
         for t in range(seq):
             perturbation = alpha * v
-            with torch.no_grad(), model.trace(to_transformer_input(tokenized)):
+            with torch.no_grad(), model.trace(to_transformer_input(example)):
                 model.model.layers[layer].output[0, t] += perturbation  # type: ignore[attr-defined]
                 logits = model.output.logits.save()  # type: ignore[attr-defined]
-            loss_t, _ = _final_token_loss_entropy(logits[0], tokenized["label_id"])
+            loss_t, _ = _final_token_loss_entropy(logits[0], example["label_id"])
             deltas[t] = loss_t - baseline_loss
         return deltas.detach().float().cpu().numpy()
 
-    return _make_example_selector_widget(train_list, probe_list, tokenizer, basis_list, compute, "Δloss(steered)")
+    return _make_example_selector_widget(example_splits, tokenizer, basis_list, compute, "Δloss(steered)")
 
 
 def example_steering_curve_widget(
@@ -548,19 +578,20 @@ def example_cosine_widget(
     layer: int = LAYER,
 ) -> widgets.Widget:
     basis_list = _load_basis(cache_path)
-    train_list = list(_load_tok_train(cache_path))
-    probe_list = list(_load_tok_probe(cache_path))
+    example_splits = {
+        "train": list(_load_tok_train(cache_path)),
+        "probe": list(_load_tok_probe(cache_path))
+    }
     tokenizer: PreTrainedTokenizerBase = load_tokenizer(MODEL_ID)  # type: ignore[assignment]
 
-    def compute(split: str, ex_idx: int, basis: BasisDirection | None) -> np.ndarray:
+    def compute(example: TokenizedExample, basis: BasisDirection | None) -> np.ndarray:
         assert basis is not None
-        tokenized = (probe_list if split == "probe" else train_list)[ex_idx]
-        neg_grad = compute_neg_gradients(model, tokenized, layer)
+        neg_grad = compute_neg_gradients(model, example, layer)
         v = torch.as_tensor(basis["vector"], dtype=neg_grad.dtype, device=neg_grad.device)
         cos = F.cosine_similarity(neg_grad, v.unsqueeze(0), dim=-1)
         return cos.detach().float().cpu().numpy()
 
-    return _make_example_selector_widget(train_list, probe_list, tokenizer, basis_list, compute, "cos")
+    return _make_example_selector_widget(example_splits, tokenizer, basis_list, compute, "cos")
 
 
 def example_gradient_norm_widget(
@@ -568,13 +599,14 @@ def example_gradient_norm_widget(
     model: LanguageModel,
     layer: int = LAYER,
 ) -> widgets.Widget:
-    train_list = list(_load_tok_train(cache_path))
-    probe_list = list(_load_tok_probe(cache_path))
+    example_splits = {
+        "train": list(_load_tok_train(cache_path)),
+        "probe": list(_load_tok_probe(cache_path))
+    }
     tokenizer: PreTrainedTokenizerBase = load_tokenizer(MODEL_ID)  # type: ignore[assignment]
 
-    def compute(split: str, ex_idx: int, _basis: BasisDirection | None) -> np.ndarray:
-        tokenized = (probe_list if split == "probe" else train_list)[ex_idx]
-        neg_grad = compute_neg_gradients(model, tokenized, layer)
+    def compute(example: TokenizedExample, _basis: BasisDirection | None) -> np.ndarray:
+        neg_grad = compute_neg_gradients(model, example, layer)
         return neg_grad.norm(dim=-1).detach().float().cpu().numpy()
 
-    return _make_example_selector_widget(train_list, probe_list, tokenizer, None, compute, "‖∇‖")
+    return _make_example_selector_widget(example_splits, tokenizer, None, compute, "‖∇‖")
