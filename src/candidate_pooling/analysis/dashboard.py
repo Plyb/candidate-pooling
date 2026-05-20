@@ -209,6 +209,49 @@ def fingerprint_histograms_widget(cache_path: Path) -> Element:
     return _BasisDropdown(basis_list, render)
 
 
+@reacton.component
+def _TokenSelector(
+    example: TokenizedExample,
+    tokenizer: PreTrainedTokenizerBase,
+    selected_idx: int,
+    on_select: Callable[[int], None],
+    values: np.ndarray | None = None,
+    hover_label: str = "",
+) -> Element:
+    scale = max(float(np.abs(values).max()), 1e-12) if values is not None else 1.0
+    with rw.HBox(layout={"flex_flow": "row wrap", "align_items": "center"}) as main:
+        for i, tok_id in enumerate(example["input_ids"]):
+            raw = _decode_token(tokenizer, int(tok_id))
+            tok_display = _visualize_invisibles(raw)
+            if values is not None:
+                v = float(values[i])
+                alpha = min(abs(v) / scale, 1.0)
+                base = "255,80,80" if v > 0 else "80,80,255"
+                bg = f"rgba({base},{alpha:.2f})"
+                tooltip = f"{i}: {tok_display!r} · {hover_label}={v:+.4f}" if hover_label else f"{i}: {tok_display!r} · {v:+.4f}"
+            else:
+                bg = "white"
+                tooltip = f"{i}: {tok_display!r}"
+            border = "2px solid black" if i == selected_idx else "1px solid #ddd"
+            rw.Button(
+                description=tok_display.replace(" ", " "),
+                on_click=lambda i=i: on_select(i),
+                layout={
+                    "width": "auto",
+                    "min_width": "0",
+                    "height": "auto",
+                    "padding": "0 4px",
+                    "margin": "1px",
+                    "border": border,
+                },
+                style={"button_color": bg, "font_family": "monospace", "font_size": "0.9em"},
+                tooltip=tooltip,
+            )
+            if "\n" in raw:
+                rw.Box(layout={"flex": "0 0 100%", "height": "0px"})
+    return main
+
+
 def _render_token_spans(
     ex: TokenizedExample,
     values: np.ndarray,
@@ -416,7 +459,8 @@ def _SteeringCurve(
 
     basis = basis_list[basis_idx]
     v = torch.as_tensor(basis["vector"], dtype=jac_loss.dtype, device=jac_loss.device)
-    score = float(jac_loss[token_idx] @ v)
+    jv_per_token = (jac_loss @ v).detach().float().cpu().numpy()
+    score = float(jv_per_token[token_idx])
     baseline_scalar = float(baseline_loss)
 
     if log_alpha:
@@ -470,13 +514,14 @@ def _SteeringCurve(
                 options=[(f"{i}: example {e['example_id']}", i) for i, e in enumerate(current_list)],
                 value=example_idx, on_value=on_example, description="Example:",
             )
-            rw.Dropdown(
-                options=[
-                    (f"{i}: {_visualize_invisibles(_decode_token(tokenizer, int(tok_id)))!r}", i)
-                    for i, tok_id in enumerate(tokenized["input_ids"])
-                ],
-                value=token_idx, on_value=set_token_idx, description="Token:",
-            )
+        _TokenSelector(
+            example=tokenized,
+            tokenizer=tokenizer,
+            selected_idx=token_idx,
+            on_select=set_token_idx,
+            values=jv_per_token,
+            hover_label="J·v",
+        )
         with rw.HBox():
             rw.FloatText(value=alpha_max, on_value=set_alpha_max, description="α max:",
                          layout={"width": "180px"})
