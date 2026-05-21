@@ -359,7 +359,7 @@ requires-dist = [
     { name = "jaxtyping", specifier = "==0.3.3" },
     { name = "jupyterlab", specifier = "==4.5.6" },
     { name = "matplotlib", specifier = "==3.10.9" },
-    { name = "mirror-pipeline", editable = "../../MIRROR-Pipeline" },
+    { name = "mirror-pipeline", git = "https://github.com/DRAGNLabs/MIRROR-Pipeline.git" },
     { name = "nnsight", specifier = "==0.7.0" },
     { name = "notebook", specifier = "==7.5.5" },
     { name = "numpy", specifier = "==2.4.4" },
@@ -1750,7 +1750,7 @@ wheels = [
 [[package]]
 name = "mirror-pipeline"
 version = "0.1.0"
-source = { editable = "../../MIRROR-Pipeline" }
+source = { git = "https://github.com/DRAGNLabs/MIRROR-Pipeline.git#8992aa6ad55522386c14ecbde1e6401db0c493de" }
 dependencies = [
     { name = "aiohttp" },
     { name = "datasets" },
@@ -1765,24 +1765,6 @@ dependencies = [
     { name = "transformers" },
     { name = "wandb" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", specifier = "==3.13.1" },
-    { name = "datasets", specifier = "==4.3.0" },
-    { name = "dotenv", specifier = "==0.9.9" },
-    { name = "ipykernel", specifier = "==7.2.0" },
-    { name = "jaxtyping", specifier = "==0.3.3" },
-    { name = "jsonargparse", specifier = "==4.42.0" },
-    { name = "jupyterlab", specifier = "==4.5.6" },
-    { name = "lightning", specifier = "==2.5.5" },
-    { name = "matplotlib", specifier = "==3.10.9" },
-    { name = "pyright", marker = "extra == 'dev'" },
-    { name = "tqdm", specifier = "==4.67.1" },
-    { name = "transformers", specifier = "==5.2.0" },
-    { name = "wandb" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "mistune"
