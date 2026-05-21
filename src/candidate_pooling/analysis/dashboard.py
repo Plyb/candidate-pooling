@@ -1,4 +1,6 @@
+import base64
 import html
+import io
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Hashable, Mapping, cast
@@ -557,6 +559,332 @@ def example_steering_curve_widget(
         layer=layer,
         alpha_max_default=alpha_max,
         n_alphas_default=n_alphas,
+    )
+
+
+def _capture_downstream_attn(
+    model: LanguageModel,
+    example: TokenizedExample,
+    steer_layer: int,
+    steer_token_idx: int | None = None,
+    perturbation: Float[Tensor, "d_model"] | None = None,
+) -> Float[Tensor, "n_downstream n_heads seq seq"]:
+    n_layers = len(model.model.layers)  # type: ignore[attr-defined]
+    downstream = list(range(steer_layer + 1, n_layers))
+    config = model.model.config  # type: ignore[attr-defined]
+    prev_output_attentions = getattr(config, "output_attentions", False)
+    config.output_attentions = True
+    saved: list[Any] = []
+    try:
+        with torch.no_grad(), model.trace(to_transformer_input(example)):
+            if perturbation is not None and steer_token_idx is not None:
+                model.model.layers[steer_layer].output[0, steer_token_idx] += perturbation  # type: ignore[attr-defined]
+            for L in downstream:
+                saved.append(model.model.layers[L].self_attn.output.save())  # type: ignore[attr-defined]
+    finally:
+        config.output_attentions = prev_output_attentions
+    stacked = []
+    for L_idx, out in enumerate(saved):
+        L = steer_layer + 1 + L_idx
+        attn_weights = out[1] if isinstance(out, tuple) and len(out) >= 2 else None
+        if not isinstance(attn_weights, torch.Tensor):
+            raise RuntimeError(
+                f"layer {L} returned no attention weights (got {type(out).__name__} → "
+                f"{type(attn_weights).__name__}); model must be loaded with eager_attn=True"
+            )
+        stacked.append(attn_weights[0])  # drop batch dim → [n_heads, seq, seq]
+    return torch.stack(stacked, dim=0)
+
+
+def compute_attention_pattern_deltas(
+    model: LanguageModel,
+    example: TokenizedExample,
+    steer_layer: int,
+    token_idx: int,
+    direction: Float[Tensor, "d_model"],
+    alpha: float,
+) -> Float[Tensor, "n_downstream n_heads seq seq"]:
+    """Return steered − baseline attention patterns for every layer strictly after
+    `steer_layer`. Requires the model loaded with attn_implementation="eager"."""
+    baseline = _capture_downstream_attn(model, example, steer_layer)
+    if alpha == 0.0:
+        return torch.zeros_like(baseline)
+    perturbation = (alpha * direction).to(baseline.dtype).to(baseline.device)
+    steered = _capture_downstream_attn(model, example, steer_layer, token_idx, perturbation)
+    return steered - baseline
+
+
+def _heatmap_png(arr: np.ndarray, vmax: float, size_px: int) -> bytes:
+    fig = plt.figure(figsize=(size_px / 100, size_px / 100), dpi=100)
+    ax = fig.add_axes((0.0, 0.0, 1.0, 1.0))
+    ax.imshow(arr, cmap="RdBu_r", vmin=-vmax, vmax=vmax, aspect="auto", interpolation="nearest")
+    ax.axis("off")
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    plt.close(fig)
+    return buf.getvalue()
+
+
+_THUMB_PX = 48
+
+
+def _thumb_style_block(class_to_png: dict[str, bytes]) -> str:
+    rules = []
+    for cls, png in class_to_png.items():
+        b64 = base64.b64encode(png).decode("ascii")
+        rules.append(
+            f"button.jupyter-button.{cls} {{"
+            f" background-image: url('data:image/png;base64,{b64}') !important;"
+            f" background-size: 100% 100% !important;"
+            f" background-repeat: no-repeat !important;"
+            f" background-color: transparent !important;"
+            f" min-width: {_THUMB_PX + 4}px !important;"
+            f" max-width: {_THUMB_PX + 4}px !important;"
+            f" min-height: {_THUMB_PX + 4}px !important;"
+            f" max-height: {_THUMB_PX + 4}px !important;"
+            f" padding: 0 !important;"
+            f" margin: 1px !important;"
+            f" flex: 0 0 auto !important;"
+            f" box-sizing: border-box !important;"
+            f"}}"
+        )
+    return "<style>" + "\n".join(rules) + "</style>"
+
+
+@reacton.component
+def _ThumbnailButton(
+    class_name: str,
+    selected: bool,
+    tooltip: str,
+    on_click: Callable[[], None],
+) -> Element:
+    border = "2px solid #000" if selected else "1px solid #ccc"
+    btn_el = rw.Button(
+        description="",
+        tooltip=tooltip,
+        on_click=lambda *_args: on_click(),  # type: ignore[arg-type]
+        layout={"border": border},
+    )
+    class_ref = reacton.use_ref(cast(str | None, None))
+
+    def attach() -> None:
+        btn = reacton.get_widget(btn_el)
+        prev = class_ref.current
+        if prev is not None and prev != class_name:
+            remove_class = getattr(btn, "remove_class", None)
+            if callable(remove_class):
+                remove_class(prev)
+        add_class = getattr(btn, "add_class", None)
+        if callable(add_class):
+            add_class(class_name)
+        class_ref.current = class_name
+
+    reacton.use_effect(attach, [class_name])
+    return btn_el
+
+
+
+@reacton.component
+def _AttentionPatternDelta(
+    basis_list: list[BasisDirection],
+    splits: Mapping[str, list[TokenizedExample]],
+    tokenizer: PreTrainedTokenizerBase,
+    model: LanguageModel,
+    layer: int,
+    alpha_default: float,
+) -> Element:
+    split_keys = list(splits.keys())
+    split, set_split = reacton.use_state(split_keys[0])
+    basis_idx, set_basis_idx = reacton.use_state(0)
+    example_idx, set_example_idx = reacton.use_state(0)
+    token_idx, set_token_idx = reacton.use_state(0)
+    alpha, set_alpha = reacton.use_state(alpha_default)
+    selected_cell, set_selected_cell = reacton.use_state(cast(tuple, ("overall",)))
+
+    jac_cache_ref = reacton.use_ref(cast(dict[tuple[str, int], tuple[Float[Tensor, "seq d_model"], TokenizedExample]], {}))
+    delta_cache_ref = reacton.use_ref(cast(dict[tuple[str, int, int, int, float], Float[Tensor, "n_down n_heads seq seq"]], {}))
+
+    current_list = splits[split]
+    example_idx = min(example_idx, len(current_list) - 1)
+    tokenized_preview = current_list[example_idx]
+    token_idx = min(token_idx, int(tokenized_preview["input_ids"].shape[0]) - 1)
+
+    def on_split(new_split: str) -> None:
+        set_split(new_split)
+        set_example_idx(0)
+        set_token_idx(0)
+        set_selected_cell(("overall",))
+
+    def on_example(new_idx: int) -> None:
+        set_example_idx(int(new_idx))
+        set_token_idx(0)
+        set_selected_cell(("overall",))
+
+    jac_key = (split, example_idx)
+    jac_cache = jac_cache_ref.current
+    if jac_key not in jac_cache:
+        tokenized = current_list[example_idx]
+        jac_loss, _ = compute_jacobians(model, tokenized, layer)
+        jac_cache[jac_key] = (jac_loss.detach(), tokenized)
+    jac_loss, tokenized = jac_cache[jac_key]
+
+    basis = basis_list[basis_idx]
+    v = torch.as_tensor(basis["vector"], dtype=jac_loss.dtype, device=jac_loss.device)
+    jv_per_token = (jac_loss @ v).detach().float().cpu().numpy()
+
+    delta_key = (split, example_idx, basis_idx, token_idx, float(alpha))
+    delta_cache = delta_cache_ref.current
+    if delta_key not in delta_cache:
+        delta_cache[delta_key] = compute_attention_pattern_deltas(
+            model, tokenized, layer, token_idx, v, float(alpha)
+        ).detach()
+    delta = delta_cache[delta_key]  # [n_down, n_heads, seq, seq]
+
+    delta_np = delta.float().cpu().numpy()
+    n_down, n_heads, seq, _ = delta_np.shape
+    vmax = float(np.abs(delta_np).max())
+    if vmax == 0.0:
+        vmax = 1e-12
+
+    overall_avg = delta_np.mean(axis=(0, 1))  # [seq, seq]
+    layer_avgs = delta_np.mean(axis=1)  # [n_down, seq, seq]
+
+    class_to_png: dict[str, bytes] = {}
+    delta_hash = abs(hash((delta_key, selected_cell, float(vmax)))) % (10 ** 8)
+
+    def thumb_class(slot: str) -> str:
+        cls = f"attn-thumb-{delta_hash}-{slot}"
+        return cls
+
+    overall_class = thumb_class("overall")
+    class_to_png[overall_class] = _heatmap_png(overall_avg, vmax, _THUMB_PX)
+    layer_classes: list[str] = []
+    head_classes: list[list[str]] = []
+    for L_idx in range(n_down):
+        lc = thumb_class(f"L{L_idx}avg")
+        class_to_png[lc] = _heatmap_png(layer_avgs[L_idx], vmax, _THUMB_PX)
+        layer_classes.append(lc)
+        row: list[str] = []
+        for h in range(n_heads):
+            hc = thumb_class(f"L{L_idx}H{h}")
+            class_to_png[hc] = _heatmap_png(delta_np[L_idx, h], vmax, _THUMB_PX)
+            row.append(hc)
+        head_classes.append(row)
+    style_block = _thumb_style_block(class_to_png)
+
+    def cell_for(sel: tuple) -> tuple[np.ndarray, str]:
+        if sel[0] == "overall":
+            return overall_avg, "overall avg (all downstream heads)"
+        if sel[0] == "layer":
+            L = int(sel[1])
+            return layer_avgs[L - (layer + 1)], f"L{L} avg (heads {n_heads})"
+        L, h = int(sel[1]), int(sel[2])
+        return delta_np[L - (layer + 1), h], f"L{L} H{h}"
+
+    expanded_arr, expanded_title = cell_for(selected_cell)
+    seq_ids = [int(t) for t in tokenized["input_ids"]]
+    tick_labels = [_visualize_invisibles(_decode_token(tokenizer, t)) for t in seq_ids]
+
+    def draw_expanded() -> None:
+        fig, ax = plt.subplots(figsize=(12, 10))
+        im = ax.imshow(expanded_arr, cmap="RdBu_r", vmin=-vmax, vmax=vmax, aspect="auto", interpolation="nearest")
+        ax.set_xticks(range(seq))
+        ax.set_yticks(range(seq))
+        ax.set_xticklabels(tick_labels, rotation=90, fontsize=7, family="monospace")
+        ax.set_yticklabels(tick_labels, fontsize=7, family="monospace")
+        ax.set_xticks(np.arange(-0.5, seq, 1), minor=True)
+        ax.set_yticks(np.arange(-0.5, seq, 1), minor=True)
+        ax.grid(which="minor", color="#888", linewidth=0.3, alpha=0.4)
+        ax.tick_params(which="minor", length=0)
+        ax.plot([-0.5, seq - 0.5], [-0.5, seq - 0.5], color="#000", linewidth=0.6, alpha=0.5)
+        ax.set_xlim(-0.5, seq - 0.5)
+        ax.set_ylim(seq - 0.5, -0.5)
+        ax.set_xlabel("key token")
+        ax.set_ylabel("query token")
+        ax.set_title(f"Δ attention · {expanded_title} · α={alpha:+.3g}")
+        fig.colorbar(im, ax=ax, fraction=0.04, pad=0.02)
+        fig.tight_layout()
+        display(fig)
+        plt.close(fig)
+
+    redraw_key = (split, basis_idx, example_idx, token_idx, float(alpha), selected_cell)
+
+    with rw.VBox() as main:
+        rw.HTML(value=style_block)
+        with rw.HBox():
+            rw.Dropdown(options=split_keys, value=split, on_value=on_split, description="Split:")
+            rw.Dropdown(
+                options=[(f"cluster {b['cluster_id']} (ex {b['example_id']})", i) for i, b in enumerate(basis_list)],
+                value=basis_idx, on_value=set_basis_idx, description="Basis:",
+            )
+            rw.Dropdown(
+                options=[(f"{i}: example {e['example_id']}", i) for i, e in enumerate(current_list)],
+                value=example_idx, on_value=on_example, description="Example:",
+            )
+        _TokenSelector(
+            example=tokenized,
+            tokenizer=tokenizer,
+            selected_idx=token_idx,
+            on_select=set_token_idx,
+            values=jv_per_token,
+            hover_label="J·v",
+        )
+        with rw.HBox():
+            rw.FloatText(value=alpha, on_value=set_alpha, description="α:", layout={"width": "180px"})
+
+        with rw.VBox():
+            _MatplotlibView(draw=draw_expanded, redraw_key=redraw_key)
+
+            with rw.VBox(layout={"max_height": "600px", "overflow": "auto", "padding_left": "12px"}):
+                with rw.HBox(layout={"flex_flow": "row nowrap"}):
+                    _ThumbnailButton(
+                        class_name=overall_class,
+                        selected=(selected_cell == ("overall",)),
+                        tooltip="overall avg",
+                        on_click=lambda: set_selected_cell(("overall",)),
+                    )
+                for L_idx in range(n_down):
+                    L = layer + 1 + L_idx
+                    with rw.HBox(layout={"flex_flow": "row nowrap"}):
+                        _ThumbnailButton(
+                            class_name=layer_classes[L_idx],
+                            selected=(selected_cell == ("layer", L)),
+                            tooltip=f"L{L} avg",
+                            on_click=lambda L=L: set_selected_cell(("layer", L)),
+                        )
+                        for h in range(n_heads):
+                            _ThumbnailButton(
+                                class_name=head_classes[L_idx][h],
+                                selected=(selected_cell == ("head", L, h)),
+                                tooltip=f"L{L} H{h}",
+                                on_click=lambda L=L, h=h: set_selected_cell(("head", L, h)),
+                            )
+    return main
+
+
+def example_attention_delta_widget(
+    cache_path: Path,
+    model: LanguageModel,
+    layer: int = LAYER,
+    alpha_default: float = 1.0,
+) -> Element:
+    """Pick a (split, example, basis, token, α): show how every downstream attention head's
+    pattern shifts under the steering perturbation α·v applied to the layer-`layer` activation
+    at the selected token. Requires `model` loaded with `eager_attn=True`."""
+    basis_list = _load_basis(cache_path)
+    splits: Mapping[str, list[TokenizedExample]] = {
+        "probe": list(_load_tok_probe(cache_path)),
+        "train": list(_load_tok_train(cache_path)),
+    }
+    tokenizer: PreTrainedTokenizerBase = load_tokenizer(MODEL_ID)  # type: ignore[assignment]
+
+    return _AttentionPatternDelta(
+        basis_list=basis_list,
+        splits=splits,
+        tokenizer=tokenizer,
+        model=model,
+        layer=layer,
+        alpha_default=alpha_default,
     )
 
 

@@ -359,7 +359,7 @@ requires-dist = [
     { name = "jaxtyping", specifier = "==0.3.3" },
     { name = "jupyterlab", specifier = "==4.5.6" },
     { name = "matplotlib", specifier = "==3.10.9" },
-    { name = "mirror-pipeline", editable = "/home/kobyjl/MIRROR-Pipeline" },
+    { name = "mirror-pipeline", editable = "../../MIRROR-Pipeline" },
     { name = "nnsight", specifier = "==0.7.0" },
     { name = "notebook", specifier = "==7.5.5" },
     { name = "numpy", specifier = "==2.4.4" },
@@ -1750,7 +1750,7 @@ wheels = [
 [[package]]
 name = "mirror-pipeline"
 version = "0.1.0"
-source = { editable = "/home/kobyjl/MIRROR-Pipeline" }
+source = { editable = "../../MIRROR-Pipeline" }
 dependencies = [
     { name = "aiohttp" },
     { name = "datasets" },
