@@ -71,7 +71,7 @@ def _BasisDropdown(
 ) -> Element:
     idx, set_idx = reacton.use_state(0)
     options = [(f"Direction {b['cluster_id']} (ex {b['example_id']})", i) for i, b in enumerate(basis_dir_list)]
-    with rw.VBox() as main: # TODO: not sure I love this `with` syntax. Can we do this more functionally?
+    with rw.VBox() as main:
         rw.Dropdown(options=options, value=idx, on_value=set_idx, description="Basis:")
         render(basis_dir_list[idx])
     return main
@@ -273,8 +273,6 @@ def _render_token_spans(
         )
     return "".join(spans)
 
-# TODO unify with _BasisDropdown
-# TODO: is there a way to factor out the list-of-dropdowns aspect of this? might need to do some overloads to get the different arities
 @reacton.component
 def _ExampleSelector(
     example_splits: Mapping[str, list[TokenizedExample]],
