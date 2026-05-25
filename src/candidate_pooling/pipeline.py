@@ -4,6 +4,7 @@ from typing import Any, cast
 
 from datasets import Dataset
 from transformers import LlamaForCausalLM
+from runlog import start_run
 
 from candidate_pooling.basis import basis
 from candidate_pooling.cluster import cluster
@@ -27,11 +28,9 @@ from candidate_pooling.types import (
     TokenizedExample,
 )
 
-MODEL_ID = "meta-llama/Llama-3.2-1B"
-CACHE_DIR = (
-    Path.home() / "nobackup" / "autodelete" / "candidate-pooling" / "pipeline_cache"
-)
-_OUTPUT_DIR = Path.home() / "nobackup" / "autodelete" / "candidate-pooling"
+MODEL_ID = "meta-llama/Llama-3.1-8B"
+OUTPUT_DIR = start_run(Path().home() / "nobackup" / "autodelete" / "candidate-pooling", cfg= { "model": MODEL_ID })
+CACHE_DIR = OUTPUT_DIR / "pipeline_cache"
 
 
 def _to_dataset[T : Mapping[str, Any]](records: Iterable[T]) -> TypedDataset[T]:
@@ -119,7 +118,7 @@ def run_pipeline(n_train: int = 1000, n_probe: int = 200) -> None:
             )
         )
 
-    _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     get_probe_mean_activation()
-    evaluate(get_basis()).savefig(_OUTPUT_DIR / "scatter.png", dpi=150)
-    visualize_clusters(get_clustered()).savefig(_OUTPUT_DIR / "umap.png", dpi=150)
+    evaluate(get_basis()).savefig(OUTPUT_DIR / "scatter.png", dpi=150)
+    visualize_clusters(get_clustered()).savefig(OUTPUT_DIR / "umap.png", dpi=150)
