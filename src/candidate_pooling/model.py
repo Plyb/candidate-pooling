@@ -18,9 +18,9 @@ def load_nnsight_model(
     eager_attn: bool = False,
 ) -> LanguageModel:
     if eager_attn:
-        hf_model = load_model(model_id, model_class=model_cls, attn_implementation="eager", device_map="auto")
+        hf_model = load_model(model_id, model_class=model_cls, attn_implementation="eager").cuda()
     else:
-        hf_model = load_model(model_id, model_class=model_cls, device_map="auto")
+        hf_model = load_model(model_id, model_class=model_cls).cuda()
     tokenizer: PreTrainedTokenizerBase = load_tokenizer(model_id)  # type: ignore[assignment]
     tokenizer.pad_token = tokenizer.eos_token
     return LanguageModel(hf_model, tokenizer=tokenizer)  # type: ignore[arg-type]

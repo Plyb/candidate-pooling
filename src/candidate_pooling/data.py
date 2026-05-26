@@ -59,9 +59,8 @@ def tokenize_dataset(
 
     target = n_train + n_probe
     lazy_pipeline = dataset.map(tokenize, with_indices=True).filter(filter_fn).take(target)
-    combined = TypedDataset[TokenizedExample](
-        cast(Dataset, Dataset.from_generator(lambda: iter(lazy_pipeline)))
-    )
+    items = list(lazy_pipeline)
+    combined = TypedDataset[TokenizedExample](cast(Dataset, Dataset.from_list(items)))  # type: ignore[arg-type]
 
     if len(combined) < target:
         logger.warning(

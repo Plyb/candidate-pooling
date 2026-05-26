@@ -1,13 +1,10 @@
-from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any, cast
 
-from datasets import Dataset
 from transformers import LlamaForCausalLM
 from runlog import start_run
 
 from candidate_pooling.basis import basis
-from candidate_pooling.cluster import cluster
+from candidate_pooling.cluster import N_CLUSTERS, cluster
 from candidate_pooling.fingerprint import (
     annotate_with_std_dev,
     make_covariance_fn,
@@ -17,7 +14,7 @@ from candidate_pooling.fingerprint import (
 from candidate_pooling.lib.dataset_utils import load_or_compute, set_format
 from candidate_pooling.lib.tensor_cache import load_or_compute_tensor
 from candidate_pooling.lib.typed_dataset import TypedDataset
-from candidate_pooling.mining import LAYER, TOP_K, make_mining_fn
+from candidate_pooling.mining import LAYER, MiningStrategy, SaeStrategy, TopKGradsStrategy
 from candidate_pooling.model import load_nnsight_model
 from candidate_pooling.types import (
     AnnotatedCandidate,
@@ -27,23 +24,28 @@ from candidate_pooling.types import (
     FingerprintedCandidates,
     TokenizedExample,
 )
+from candidate_pooling.util import to_dataset
 
+RUNS_DIR = Path().home() / "nobackup" / "autodelete" / "candidate-pooling"
 MODEL_ID = "meta-llama/Llama-3.1-8B"
-OUTPUT_DIR = start_run(Path().home() / "nobackup" / "autodelete" / "candidate-pooling", cfg= { "model": MODEL_ID })
-CACHE_DIR = OUTPUT_DIR / "pipeline_cache"
 
-
-def _to_dataset[T : Mapping[str, Any]](records: Iterable[T]) -> TypedDataset[T]:
-    return TypedDataset[T](cast(Dataset, Dataset.from_list(list(records)))) # type: ignore
-
+MINING_STRATEGY: MiningStrategy = SaeStrategy("llama_scope_lxr_8x", f"l{LAYER}r_8x")
 
 def run_pipeline(n_train: int = 1000, n_probe: int = 200) -> None:
     from candidate_pooling.data import load_arc_easy, tokenize_dataset
     from candidate_pooling.evaluate import evaluate, visualize_clusters
 
+    OUTPUT_DIR = start_run(RUNS_DIR, cfg={
+        "model": MODEL_ID,
+        "n_clusters": N_CLUSTERS,
+        "layer": LAYER,
+        **MINING_STRATEGY.run_cfg,
+    })
+    CACHE_DIR = OUTPUT_DIR / "pipeline_cache"
+
     model = load_nnsight_model(MODEL_ID, LlamaForCausalLM)
 
-    mine_fn = make_mining_fn(model, LAYER, TOP_K)
+    mine_fn = MINING_STRATEGY.make_mine_fn(model)
     fp_fn = make_fingerprint_fn(model, LAYER)
     mean_act_fn = make_mean_activation_fn(model, LAYER)
     cov_fn = make_covariance_fn(model, LAYER)
@@ -71,7 +73,7 @@ def run_pipeline(n_train: int = 1000, n_probe: int = 200) -> None:
         return load_or_compute(
             CACHE_DIR / "mined",
             lambda: set_format(
-                _to_dataset(cand for ex in get_tok_train() for cand in mine_fn(ex)),
+                mine_fn(get_tok_train),
                 Candidate
             ),
         )
@@ -92,7 +94,7 @@ def run_pipeline(n_train: int = 1000, n_probe: int = 200) -> None:
         return load_or_compute(
             CACHE_DIR / "annotated",
             lambda: set_format(
-                _to_dataset(annotate_with_std_dev(get_mined(), get_probe_covariance())),
+                to_dataset(annotate_with_std_dev(get_mined(), get_probe_covariance())),
                 AnnotatedCandidate,
             ),
         )
@@ -113,12 +115,14 @@ def run_pipeline(n_train: int = 1000, n_probe: int = 200) -> None:
         return load_or_compute(
             CACHE_DIR / "out",
             lambda: set_format(
-                _to_dataset(basis(get_clustered())),
+                to_dataset(basis(get_clustered())),
                 BasisDirection
             )
         )
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     get_probe_mean_activation()
+    get_tok_train() # TODO: maybe just get rid of the thunks on the MiningStrategy? Or keep these here to make it explicit that we need them
+    get_tok_probe()
     evaluate(get_basis()).savefig(OUTPUT_DIR / "scatter.png", dpi=150)
     visualize_clusters(get_clustered()).savefig(OUTPUT_DIR / "umap.png", dpi=150)
